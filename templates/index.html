@@ -9,7 +9,7 @@
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@600;700&display=swap">
 <style>
 /* Operator console: control column (scan + rules) on the left, results and activity log
-   on the right; stacks to one column on phones. Fonts fall back cleanly when offline. */
+   on the right; stacks to one column in narrow windows. Fonts fall back cleanly when offline. */
 :root{
   color-scheme: dark;
   --void:#0A0D12; --panel:#121822; --panel-hi:#18202C; --inset:#0D1219; --line:#232C3A;
@@ -25,6 +25,7 @@ body{margin:0; background:var(--void); color:var(--text); font-family:var(--sans
 button,input,select{font:inherit; color:inherit}
 :focus-visible{outline:2px solid var(--signal); outline-offset:2px}
 .tnum{font-variant-numeric:tabular-nums}
+[hidden]{display:none !important}
 .sr{position:absolute; width:1px; height:1px; overflow:hidden; clip:rect(0 0 0 0); white-space:nowrap}
 
 /* ---------- top bar ---------- */
@@ -41,20 +42,24 @@ button,input,select{font:inherit; color:inherit}
 .dot.on{background:var(--open)} .dot.warn{background:var(--filtered)} .dot.off{background:var(--blocked)}
 
 /* ---------- layout ---------- */
-.shell{display:grid; grid-template-columns:minmax(300px,360px) minmax(0,1fr); gap:18px; padding:18px 20px 40px; max-width:1360px; margin:0 auto}
+.shell{display:grid; grid-template-columns:minmax(300px,370px) minmax(0,1fr); gap:18px; padding:18px 20px 40px; max-width:1360px; margin:0 auto}
 .col{display:flex; flex-direction:column; gap:18px; min-width:0}
 .panel{background:var(--panel); border:1px solid var(--line); border-radius:12px; min-width:0}
-.ph{display:flex; align-items:center; justify-content:space-between; gap:10px; padding:13px 16px; border-bottom:1px solid var(--line)}
+.ph{display:flex; flex-wrap:wrap; align-items:center; justify-content:space-between; gap:8px 10px; padding:13px 16px; border-bottom:1px solid var(--line)}
 .ph h2{margin:0; font-size:12px; font-weight:600; text-transform:uppercase; letter-spacing:.08em; color:var(--muted)}
 .ph .meta{font-family:var(--mono); font-size:12px; color:var(--dim)}
+.ph .tools{display:flex; align-items:center; gap:10px}
 .pb{padding:16px}
 .f{display:block; font-size:12px; color:var(--muted); margin:0 0 6px}
 .field{width:100%; background:var(--inset); border:1px solid var(--line); border-radius:8px; padding:9px 11px; font-family:var(--mono); font-size:13.5px}
+select.field{padding:8px 9px; cursor:pointer}
 .field:focus{border-color:var(--signal-dim); outline:none; box-shadow:0 0 0 3px rgba(94,180,231,.15)}
 .field.bad{border-color:var(--blocked)}
 .err{min-height:18px; font-size:12px; color:var(--blocked); margin-top:5px}
 .stack{display:grid; gap:12px}
-.row2{display:grid; grid-template-columns:minmax(0,1fr) 110px; gap:10px}
+.stack > *{min-width:0}
+.row2{display:grid; grid-template-columns:minmax(0,1fr) 120px; gap:10px}
+.row2 > *{min-width:0}
 .types{display:grid; grid-template-columns:1fr 1fr; gap:7px}
 .type{position:relative; text-align:left; border:1px solid var(--line); background:var(--inset); border-radius:8px; padding:9px 10px; cursor:pointer}
 .type b{display:block; font-size:13px; font-weight:600}
@@ -70,7 +75,10 @@ button,input,select{font:inherit; color:inherit}
 .btn:hover{border-color:var(--signal-dim)}
 .btn.primary{background:var(--signal); border-color:var(--signal); color:#06121C}
 .btn.primary:hover{background:#7FC6EF}
-.btn:disabled{opacity:.5; cursor:not-allowed}
+.btn.small{padding:4px 10px; font-size:12px; font-weight:500; color:var(--muted)}
+.btn:disabled{opacity:.45; cursor:not-allowed}
+.scan-actions{display:grid; grid-template-columns:1fr auto; gap:8px}
+.scan-actions .btn.stop{color:var(--blocked)}
 .cmd{background:var(--inset); border:1px dashed var(--line); border-radius:8px; padding:9px 11px; font-family:var(--mono); font-size:11.5px; color:var(--muted); white-space:normal; overflow-wrap:anywhere}
 .cmd .p{color:var(--dim); user-select:none}
 
@@ -84,6 +92,7 @@ button,input,select{font:inherit; color:inherit}
 .rule .what .deny{color:var(--blocked)} .rule .what .allow{color:var(--open)}
 .rule .rmeta{display:block; font-family:var(--mono); font-size:11px; color:var(--dim); margin-top:2px}
 .rule .rmeta.on{color:var(--open)} .rule .rmeta.sim{color:var(--filtered)}
+.rule .rmeta .exp{color:var(--muted)}
 .x{border:0; background:transparent; color:var(--dim); cursor:pointer; padding:6px 8px; border-radius:6px; font-family:var(--mono)}
 .x:hover{color:var(--blocked); background:rgba(232,84,74,.1)}
 .empty{padding:18px 16px; color:var(--dim); font-size:13px}
@@ -94,12 +103,16 @@ button,input,select{font:inherit; color:inherit}
 .sum b{display:block; font-family:var(--mono); font-size:24px; font-weight:600; line-height:1.1}
 .sum span{display:inline-flex; align-items:center; gap:6px; font-size:12px; color:var(--muted); margin-top:4px}
 .progress{height:2px; overflow:hidden; position:relative}
-.progress.on::after{content:''; position:absolute; top:0; bottom:0; width:30%; background:var(--signal); animation:slide 1.1s ease-in-out infinite}
+.progress i{position:absolute; top:0; bottom:0; left:0; width:0; background:var(--signal); transition:width .3s}
+.progress.indet i{width:30%; animation:slide 1.1s ease-in-out infinite}
 @keyframes slide{from{left:-30%} to{left:100%}}
 .target-line{display:flex; flex-wrap:wrap; gap:6px 16px; padding:11px 16px; font-family:var(--mono); font-size:12px; color:var(--muted); border-bottom:1px solid var(--line)}
 .target-line b{color:var(--text); font-weight:500}
+.diff{padding:10px 16px; font-size:13px; color:var(--muted); border-bottom:1px solid var(--line); background:var(--inset)}
+.diff b{font-family:var(--mono); font-weight:500}
+.diff .up{color:var(--filtered)} .diff .down{color:var(--muted)}
 .tablewrap{overflow-x:auto; position:relative}
-table{width:100%; border-collapse:collapse; min-width:620px}
+table{width:100%; border-collapse:collapse; min-width:640px}
 th{text-align:left; font-family:var(--mono); font-weight:500; font-size:11px; text-transform:uppercase; letter-spacing:.06em; color:var(--dim); padding:10px 16px; border-bottom:1px solid var(--line)}
 td{padding:11px 16px; border-bottom:1px solid var(--line); font-family:var(--mono); font-size:13px}
 tbody tr:last-child td{border-bottom:0}
@@ -112,7 +125,8 @@ tbody tr.new{animation:rowin .4s ease}
 .chip.filtered, .chip.other{background:rgba(242,169,59,.13); color:var(--filtered)}
 .chip.blocked{background:rgba(232,84,74,.14); color:var(--blocked)}
 .chip .was{font-weight:400; opacity:.7}
-.td-act{text-align:right}
+.tag-new{margin-left:6px; font-size:10px; font-weight:600; letter-spacing:.05em; text-transform:uppercase; color:var(--filtered); border:1px solid rgba(242,169,59,.4); border-radius:5px; padding:1px 5px}
+.td-act{text-align:right; white-space:nowrap}
 .mini{border:1px solid var(--line); background:transparent; border-radius:6px; padding:4px 9px; font-size:12px; cursor:pointer; color:var(--muted)}
 .mini:hover{border-color:var(--blocked); color:var(--blocked)}
 .mini.un:hover{border-color:var(--open); color:var(--open)}
@@ -120,7 +134,7 @@ tbody tr.new{animation:rowin .4s ease}
 .blankmsg{margin:0; padding:28px 16px; color:var(--dim); text-align:center}
 
 /* log */
-.log{list-style:none; margin:0; padding:10px 0; max-height:240px; overflow-y:auto; font-family:var(--mono); font-size:12px}
+.log{list-style:none; margin:0; padding:10px 0; max-height:260px; overflow-y:auto; font-family:var(--mono); font-size:12px}
 .log li{display:grid; grid-template-columns:70px 52px minmax(0,1fr); gap:10px; padding:4px 16px; align-items:baseline}
 .log time{color:var(--dim)}
 .log .lv{text-transform:uppercase; font-size:10.5px; letter-spacing:.05em}
@@ -168,7 +182,10 @@ tbody tr.new{animation:rowin .4s ease}
             <button type="button" class="type" data-type="version" data-args="-sV" data-root="0" aria-pressed="false"><b>Version</b><small>nmap -sV</small></button>
           </div>
         </div>
-        <button class="btn primary" id="scan-btn" type="submit">Start scan</button>
+        <div class="scan-actions">
+          <button class="btn primary" id="scan-btn" type="submit">Start scan</button>
+          <button class="btn stop" id="stop-btn" type="button" hidden>Stop</button>
+        </div>
       </form>
     </section>
 
@@ -177,8 +194,26 @@ tbody tr.new{animation:rowin .4s ease}
       <div class="ph"><h2 id="h-rules">Firewall rules</h2><span class="meta" id="rule-count">0 rules</span></div>
       <form class="pb stack firewall-rule-form" id="rule-form" novalidate>
         <div class="row2">
-          <div><label class="f" for="rule-ip">Source IP</label><input class="field" id="rule-ip" placeholder="10.0.0.5" autocomplete="off" spellcheck="false"></div>
-          <div><label class="f" for="rule-port">Port</label><input class="field" id="rule-port" placeholder="22" inputmode="numeric" autocomplete="off"></div>
+          <div><label class="f" for="rule-ip">Source IP or range</label><input class="field" id="rule-ip" placeholder="10.0.0.5 or 10.0.0.0/24" autocomplete="off" spellcheck="false"></div>
+          <div><label class="f" for="rule-port">Port or range</label><input class="field" id="rule-port" placeholder="22 or 80-90" autocomplete="off"></div>
+        </div>
+        <div class="row2">
+          <div>
+            <span class="f">Protocol</span>
+            <div class="seg" role="group" aria-label="Protocol">
+              <button type="button" id="proto-tcp" aria-pressed="true">TCP</button>
+              <button type="button" id="proto-udp" aria-pressed="false">UDP</button>
+            </div>
+          </div>
+          <div>
+            <label class="f" for="rule-exp">Expires</label>
+            <select class="field" id="rule-exp">
+              <option value="">Never</option>
+              <option value="900">15 minutes</option>
+              <option value="3600">1 hour</option>
+              <option value="86400">24 hours</option>
+            </select>
+          </div>
         </div>
         <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap">
           <div class="seg" role="group" aria-label="Action">
@@ -198,15 +233,23 @@ tbody tr.new{animation:rowin .4s ease}
   <div class="col">
     <!-- RESULTS -->
     <section class="panel" aria-labelledby="h-results">
-      <div class="ph"><h2 id="h-results">Results</h2><span class="meta" id="scan-meta">no scan yet</span></div>
+      <div class="ph">
+        <h2 id="h-results">Results</h2>
+        <div class="tools">
+          <span class="meta" id="scan-meta">no scan yet</span>
+          <button class="btn small" id="export-csv" type="button" disabled>Export CSV</button>
+          <button class="btn small" id="export-json" type="button" disabled>Export JSON</button>
+        </div>
+      </div>
       <div class="summary">
         <div class="sum"><b class="tnum" id="c-open">0</b><span><i class="dot on"></i>open</span></div>
         <div class="sum"><b class="tnum" id="c-filtered">0</b><span><i class="dot warn"></i>filtered</span></div>
         <div class="sum"><b class="tnum" id="c-closed">0</b><span><i class="dot"></i>closed</span></div>
         <div class="sum"><b class="tnum" id="c-blocked">0</b><span><i class="dot off"></i>blocked by rule</span></div>
       </div>
-      <div class="progress" id="progress"></div>
+      <div class="progress" id="progress"><i id="bar"></i></div>
       <div class="target-line" id="target-line" hidden></div>
+      <div class="diff" id="diff" hidden></div>
       <p class="blankmsg" id="results-empty"></p>
       <div class="tablewrap" id="tablewrap">
         <table id="results">
@@ -214,7 +257,7 @@ tbody tr.new{animation:rowin .4s ease}
           <tbody></tbody>
         </table>
       </div>
-      <p class="note">Blocked marks ports covered by a deny rule for that host. The original Nmap state stays visible next to it.</p>
+      <p class="note">Blocked marks ports covered by a deny rule. The original Nmap state stays visible next to it. Block uses the expiry selected in the rule form.</p>
     </section>
 
     <!-- LOG -->
@@ -229,7 +272,8 @@ tbody tr.new{animation:rowin .4s ease}
 <script>
 (() => {
   const $ = id => document.getElementById(id);
-  const state = { os: '', privileged: false, action: 'deny', ports: [], rules: [], scanning: false, scanCmd: '' };
+  const state = { os: '', privileged: false, action: 'deny', proto: 'tcp', ports: [], rules: [],
+                  scanning: false, scanned: false, scanFailed: false, newKeys: new Set(), lastScan: null };
   $('host').textContent = location.host;
 
   /* ---- helpers ---- */
@@ -239,42 +283,77 @@ tbody tr.new{animation:rowin .4s ease}
     if (text !== undefined) e.textContent = text;
     return e;
   }
-  function log(level, msg){
+  const clock = t => new Date(t).toTimeString().slice(0, 8);
+  function log(level, msg, time){
     const li = el('li');
-    li.append(el('time', '', new Date().toTimeString().slice(0, 8)), el('span', 'lv ' + level, level), el('span', 'msg', msg));
+    li.append(el('time', '', clock(time || Date.now())), el('span', 'lv ' + level, level), el('span', 'msg', msg));
     $('log').prepend(li);
   }
   $('clear-log').onclick = () => { $('log').textContent = ''; };
+  const keyOf = p => `${p.ip}:${p.port}/${p.proto}`;
+  function timeLeft(expiresAt){
+    const s = Math.max(0, Math.round(expiresAt - Date.now() / 1000));
+    if (s < 60) return `${s}s`;
+    if (s < 3600) return `${Math.ceil(s / 60)}m`;
+    return `${Math.floor(s / 3600)}h ${Math.round((s % 3600) / 60)}m`;
+  }
 
   // Light client-side checks for quick feedback; the server validates everything again
-  const portOk = v => /^\d+$/.test(v) && +v >= 1 && +v <= 65535;
-  const ipLooksOk = v => /^[0-9.]+$/.test(v) || v.includes(':');
+  function parsePorts(v){
+    const m = /^(\d+)(?:-(\d+))?$/.exec(v);
+    if (!m) return null;
+    const lo = +m[1], hi = m[2] === undefined ? lo : +m[2];
+    return lo >= 1 && hi <= 65535 && lo <= hi ? [lo, hi] : null;
+  }
+  const sourceLooksOk = v => /^[0-9a-fA-F:.\/]+$/.test(v);
+
+  /* ---- rule matching (mirrors rule_covers in app.py) ---- */
+  function ip4(ip){
+    const p = ip.split('.');
+    if (p.length !== 4 || p.some(x => !/^\d+$/.test(x) || +x > 255)) return null;
+    return p.reduce((n, x) => n * 256 + +x, 0);
+  }
+  function covers(rule, p){
+    if ((rule.proto || 'tcp') !== p.proto || p.port < rule.port_lo || p.port > rule.port_hi) return false;
+    if (rule.ip === p.ip) return true;
+    const [net, bits] = rule.ip.split('/');
+    const a = ip4(net), b = ip4(p.ip);
+    if (bits === undefined || a === null || b === null) return false;  // IPv6 ranges: exact match only here
+    const size = 2 ** (32 - +bits);
+    return Math.floor(a / size) === Math.floor(b / size);
+  }
+  function blockingRule(p){
+    for (const r of state.rules){
+      if (covers(r, p)) return r.action === 'deny' ? r : null;  // first match wins
+    }
+    return null;
+  }
 
   /* ---- command preview, same arguments app.py builds ---- */
-  function command(ip, port, action){
+  function command(ip, lo, hi, proto, action){
     if (state.os === 'Windows'){
-      const name = `name=Block_${ip}_${port}`;
+      const ports = lo === hi ? `${lo}` : `${lo}-${hi}`;
+      const name = `name=Block_${ip.replace('/', '_')}_${ports}_${proto}`;
       return action === 'deny'
-        ? ['netsh','advfirewall','firewall','add','rule',name,'dir=in','action=block','protocol=TCP',`remoteip=${ip}`,`localport=${port}`]
+        ? ['netsh','advfirewall','firewall','add','rule',name,'dir=in','action=block',`protocol=${proto.toUpperCase()}`,`remoteip=${ip}`,`localport=${ports}`]
         : ['netsh','advfirewall','firewall','delete','rule',name];
     }
-    if (state.os === 'Linux') return ['iptables', action === 'deny' ? '-A' : '-D', 'INPUT','-p','tcp','--dport',String(port),'-s',ip,'-j','DROP'];
+    if (state.os === 'Linux'){
+      const ports = lo === hi ? `${lo}` : `${lo}:${hi}`;
+      return ['iptables', action === 'deny' ? '-A' : '-D', 'INPUT', '-p', proto, '--dport', ports, '-s', ip, '-j', 'DROP'];
+    }
     return null;
   }
   function renderPreview(){
     const box = $('cmd-preview'); box.textContent = '';
-    const cmd = command($('rule-ip').value.trim() || '<ip>', $('rule-port').value.trim() || '<port>', state.action);
+    const ports = parsePorts($('rule-port').value.trim());
+    const ip = $('rule-ip').value.trim() || '<source>';
+    const cmd = ports ? command(ip, ports[0], ports[1], state.proto, state.action) : command(ip, '<port>', '<port>', state.proto, state.action);
     if (!cmd){ box.append(el('span', 'p', `${state.os || 'This system'} has no supported OS firewall: rules are simulated`)); return; }
     box.append(el('span', 'p', state.privileged ? (state.os === 'Windows' ? 'PS> ' : '# ') : 'simulated, not run: '), cmd.join(' '));
   }
 
   /* ---- results ---- */
-  function blockingRule(p){
-    for (const r of state.rules){
-      if (r.ip === p.ip && r.port === p.port) return r.action === 'deny' ? r : null;  // first match wins
-    }
-    return null;
-  }
   function renderResults(){
     const tb = document.querySelector('#results tbody');
     const seen = new Set([...tb.querySelectorAll('tr')].map(tr => tr.dataset.k));
@@ -282,14 +361,15 @@ tbody tr.new{animation:rowin .4s ease}
     const c = { open: 0, filtered: 0, closed: 0, blocked: 0 };
     const empty = !state.ports.length;
     $('tablewrap').hidden = empty; $('results-empty').hidden = !empty;
-    $('results-empty').textContent = state.scanning ? 'Scanning… results appear when Nmap finishes.'
+    $('results-empty').textContent = state.scanning ? 'Scanning… results appear as each batch of hosts finishes.'
       : state.scanFailed ? 'Scan failed. See the message under Target.'
       : state.scanned ? 'No ports reported for this target.' : 'Enter a target and start a scan.';
+    $('export-csv').disabled = $('export-json').disabled = empty || state.scanning;
     state.ports.forEach(p => {
       const rule = blockingRule(p);
       if (c[p.state] !== undefined) c[p.state]++;
       if (rule) c.blocked++;
-      const tr = el('tr'); tr.dataset.k = `${p.ip}:${p.port}/${p.proto}`;
+      const tr = el('tr'); tr.dataset.k = keyOf(p);
       if (!seen.has(tr.dataset.k)) tr.classList.add('new');
       const svc = el('td', 'svc', p.service || '');
       if (p.version) svc.append(el('small', '', p.version));
@@ -297,12 +377,18 @@ tbody tr.new{animation:rowin .4s ease}
       if (rule){ chip = el('span', 'chip blocked', 'blocked '); chip.append(el('span', 'was', `(${p.state})`)); }
       else chip = el('span', 'chip ' + (['open','closed','filtered'].includes(p.state) ? p.state : 'other'), p.state);
       st.append(chip);
+      if (state.newKeys.has(keyOf(p))) st.append(el('span', 'tag-new', 'new'));
       const act = el('td', 'td-act');
-      if (p.proto === 'tcp' && (p.state === 'open' || rule)){
-        const b = el('button', rule ? 'mini un' : 'mini', rule ? 'Unblock' : 'Block'); b.type = 'button';
-        b.onclick = () => rule
-          ? socket.emit('remove_firewall_rule', { rule_number: state.rules.indexOf(rule) + 1 })
-          : socket.emit('add_firewall_rule', { ip: p.ip, port: p.port, action: 'deny' });
+      if (rule){
+        const n = state.rules.indexOf(rule) + 1;
+        const exact = rule.ip === p.ip && rule.port_lo === p.port && rule.port_hi === p.port;
+        const b = el('button', 'mini un', exact ? 'Unblock' : `Remove rule ${n}`); b.type = 'button';
+        if (!exact) b.title = `Rule ${n} covers ${rule.ip} → ${rule.port}/${rule.proto}`;
+        b.onclick = () => socket.emit('remove_firewall_rule', { rule_id: rule.id });
+        act.append(b);
+      } else if (String(p.state).startsWith('open')){
+        const b = el('button', 'mini', 'Block'); b.type = 'button';
+        b.onclick = () => socket.emit('add_firewall_rule', { ip: p.ip, port: p.port, proto: p.proto, action: 'deny', duration: $('rule-exp').value });
         act.append(b);
       }
       tr.append(el('td', '', p.ip), el('td', 'tnum', p.port), el('td', '', p.proto), svc, st, act);
@@ -310,6 +396,35 @@ tbody tr.new{animation:rowin .4s ease}
     });
     for (const k of Object.keys(c)) $('c-' + k).textContent = c[k];
   }
+
+  /* ---- export ---- */
+  function exportResults(fmt){
+    const scan = state.lastScan || {};
+    const rows = state.ports.map(p => ({
+      host: p.ip, port: p.port, proto: p.proto, service: p.service || '', version: p.version || '',
+      state: p.state, blocked_by_rule: !!blockingRule(p), new_since_last_scan: state.newKeys.has(keyOf(p)),
+    }));
+    let body, type;
+    if (fmt === 'json'){
+      body = JSON.stringify({ scanned_at: scan.time ? new Date(scan.time).toISOString() : null, target: scan.target || '', nmap_arguments: scan.args || '', results: rows }, null, 2);
+      type = 'application/json';
+    } else {
+      // Quote every cell, and neutralise values a spreadsheet would treat as a formula
+      const cell = v => { let s = String(v); if (/^[=+\-@\t\r]/.test(s)) s = "'" + s; return '"' + s.replace(/"/g, '""') + '"'; };
+      const cols = Object.keys(rows[0]);
+      body = [cols.join(','), ...rows.map(r => cols.map(k => cell(r[k])).join(','))].join('\r\n') + '\r\n';
+      type = 'text/csv';
+    }
+    const stamp = new Date(scan.time || Date.now()).toISOString().slice(0, 19).replace(/[:T]/g, '-');
+    const a = el('a');
+    a.href = URL.createObjectURL(new Blob([body], { type }));
+    a.download = `netscan-${(scan.target || 'scan').replace(/[^\w.-]/g, '_')}-${stamp}.${fmt}`;
+    document.body.append(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+    log('info', `Exported ${rows.length} results as ${fmt.toUpperCase()}`);
+  }
+  $('export-csv').onclick = () => exportResults('csv');
+  $('export-json').onclick = () => exportResults('json');
 
   /* ---- rules ---- */
   function renderRules(){
@@ -319,17 +434,19 @@ tbody tr.new{animation:rowin .4s ease}
     state.rules.forEach((r, i) => {
       const li = el('li', 'rule');
       const what = el('div', 'what');
-      what.append(el('em', r.action, r.action.toUpperCase()), ` ${r.ip} → :${r.port}`);
+      what.append(el('em', r.action, r.action.toUpperCase()), ` ${r.ip} → ${r.port}/${r.proto || 'tcp'}`);
       let meta;
-      if (r.action === 'deny') meta = r.enforced ? el('span', 'rmeta on', `enforced · ${r.command.split(' ')[0]}`) : el('span', 'rmeta sim', 'simulated only · run as admin/root to enforce');
+      if (r.action === 'deny') meta = r.enforced ? el('span', 'rmeta on', `enforced · ${(r.command || '').split(' ')[0]}`) : el('span', 'rmeta sim', 'simulated only · run as admin/root to enforce');
       else meta = el('span', 'rmeta', r.enforced ? 'removed matching OS block' : 'simulation');
+      if (r.expires_at){ meta.append(' · '); meta.append(el('span', 'exp', `expires in ${timeLeft(r.expires_at)}`)); }
       what.append(meta);
       const x = el('button', 'x', '✕'); x.type = 'button';
       x.setAttribute('aria-label', `Remove rule ${i + 1}`);
-      x.onclick = () => socket.emit('remove_firewall_rule', { rule_number: i + 1 });
+      x.onclick = () => socket.emit('remove_firewall_rule', { rule_id: r.id });
       li.append(el('span', 'n', i + 1), what, x); ul.append(li);
     });
   }
+  setInterval(() => { if (state.rules.some(r => r.expires_at)) renderRules(); }, 15000);
 
   /* ---- socket ---- */
   const socket = io();
@@ -353,31 +470,60 @@ tbody tr.new{animation:rowin .4s ease}
     renderPreview();
   });
   socket.on('rules_update', rules => { state.rules = rules; renderRules(); renderResults(); });
+  socket.on('audit_history', entries => { entries.forEach(e => log(e.level, e.msg, e.time * 1000)); });
+  socket.on('audit', e => log(e.level, e.msg, e.time * 1000));
 
   socket.on('scan_update', row => {
     if (row.port === 'N/A') return;  // server's "no results" placeholder
     state.ports.push({ ip: row.ip, port: row.port, proto: row.proto || 'tcp', service: row.service, version: row.version || '', state: row.state || row.status });
     renderResults();
   });
+  socket.on('scan_progress', d => {
+    const bar = $('progress');
+    if (d.total > 1){
+      bar.classList.remove('indet'); $('bar').style.width = (d.done / d.total * 100) + '%';
+      $('stop-btn').hidden = false;
+      $('scan-meta').textContent = `batch ${Math.min(d.done + 1, d.total)} of ${d.total}`;
+    } else {
+      bar.classList.add('indet');
+    }
+  });
   socket.on('scan_complete', data => {
     finishScan();
-    const n = (data && data.count) || state.ports.length;
+    const n = data.count;
+    if (data.cancelled){
+      $('scan-meta').textContent = `stopped · ${state.ports.length} ports`;
+      log('warn', `Scan stopped. ${state.ports.length} ports reported before stopping.`);
+      return;
+    }
     $('scan-meta').textContent = `${n} ports reported`;
     log('ok', `Scan complete: ${state.ports.filter(p => p.state === 'open').length} open, ${n} reported`);
+    showDiff(data.diff, data);
   });
   socket.on('scan_error', data => {
     state.scanFailed = true; finishScan();
     $('scan-err').textContent = data.message; $('scan-meta').textContent = 'scan failed';
     log('err', data.message);
   });
-  socket.on('firewall_rule_added', r => {
-    if (r.action === 'deny') r.enforced ? log('ok', r.command) : log('warn', `Deny ${r.ip}:${r.port} added to the simulation only (no admin/root rights)`);
-    else log('info', r.enforced ? `${r.command} (removed a matching OS block)` : `Allow ${r.ip}:${r.port} added to the simulation`);
-  });
-  socket.on('firewall_rule_removed', d => {
-    d.command ? log('ok', d.command) : log('info', `Rule ${d.rule_number} removed (${d.rule.action} ${d.rule.ip}:${d.rule.port})`);
-  });
   socket.on('firewall_error', d => { $('rule-err').textContent = d.message; log('err', d.message); });
+
+  /* ---- scan diff ---- */
+  function showDiff(diff, data){
+    const box = $('diff'); box.textContent = ''; box.hidden = false;
+    if (!diff || !diff.previous_time){
+      box.append(`First nmap ${data.arguments} scan of ${data.target}. The next one will be compared with it.`);
+      return;
+    }
+    state.newKeys = new Set(diff.new_open);
+    box.append(`Since the last nmap ${data.arguments} scan at ${clock(diff.previous_time * 1000)}: `);
+    if (!diff.new_open.length && !diff.no_longer_open.length){ box.append('no change in open ports.'); renderResults(); return; }
+    if (diff.new_open.length){ box.append(el('b', 'up', `${diff.new_open.length} new open`), ` (${diff.new_open.join(', ')})`); }
+    if (diff.new_open.length && diff.no_longer_open.length) box.append('; ');
+    if (diff.no_longer_open.length){ box.append(el('b', 'down', `${diff.no_longer_open.length} no longer open`), ` (${diff.no_longer_open.join(', ')})`); }
+    box.append('.');
+    diff.new_open.forEach(k => log('warn', `New open port since the last scan: ${k}`));
+    renderResults();
+  }
 
   /* ---- scan ---- */
   function selectType(type){
@@ -387,7 +533,9 @@ tbody tr.new{animation:rowin .4s ease}
   function finishScan(){
     state.scanning = false; state.scanned = true;
     $('scan-btn').disabled = false; $('scan-btn').textContent = 'Start scan';
-    $('progress').classList.remove('on'); renderResults();
+    $('stop-btn').hidden = true; $('stop-btn').disabled = false;
+    $('progress').classList.remove('indet'); $('bar').style.width = '0';
+    renderResults();
   }
   $('scan-form').addEventListener('submit', e => {
     e.preventDefault();
@@ -396,35 +544,40 @@ tbody tr.new{animation:rowin .4s ease}
     if (!target){ $('ip').classList.add('bad'); $('scan-err').textContent = 'Enter an IP address, CIDR range or hostname.'; return; }
     const type = document.querySelector('.type[aria-pressed="true"]');
     $('scan-err').textContent = ''; $('ip').classList.remove('bad');
-    state.scanning = true; state.scanFailed = false; state.ports = [];
+    state.scanning = true; state.scanFailed = false; state.ports = []; state.newKeys = new Set();
+    state.lastScan = { target, args: `nmap ${type.dataset.args}`, time: Date.now() };
     $('scan-btn').disabled = true; $('scan-btn').textContent = 'Scanning…';
-    $('progress').classList.add('on'); $('scan-meta').textContent = 'running';
+    $('progress').classList.add('indet'); $('scan-meta').textContent = 'running'; $('diff').hidden = true;
     const tl = $('target-line'); tl.textContent = ''; tl.hidden = false;
     [['target', target], ['type', `nmap ${type.dataset.args}`]].forEach(([k, v]) => { const s = el('span', '', k + ' '); s.append(el('b', '', v)); tl.append(s); });
     log('info', `nmap ${type.dataset.args} ${target}`);
     renderResults();
     socket.emit('start_scan', { target_ip: target, scan_type: type.dataset.type });
   });
+  $('stop-btn').onclick = () => { socket.emit('stop_scan'); $('stop-btn').disabled = true; $('scan-meta').textContent = 'stopping after this batch'; };
   $('ip').addEventListener('input', () => { $('ip').classList.remove('bad'); $('scan-err').textContent = ''; });
 
   /* ---- rule form ---- */
   $('rule-form').addEventListener('submit', e => {
     e.preventDefault();
     const ip = $('rule-ip').value.trim(), port = $('rule-port').value.trim();
+    const ipOk = !!ip && sourceLooksOk(ip), portOk = !!parsePorts(port);
     let msg = '';
-    if (!ip || !ipLooksOk(ip)) msg = 'Enter a single IP address, like 10.0.0.5.';
-    else if (!portOk(port)) msg = 'Port must be a number from 1 to 65535.';
-    $('rule-ip').classList.toggle('bad', !ip || !ipLooksOk(ip));
-    $('rule-port').classList.toggle('bad', !!ip && ipLooksOk(ip) && !portOk(port));
+    if (!ipOk) msg = 'Enter an IP address or a range like 10.0.0.0/24.';
+    else if (!portOk) msg = 'Port must be 1-65535, or a range like 8000-8100.';
+    $('rule-ip').classList.toggle('bad', !ipOk);
+    $('rule-port').classList.toggle('bad', ipOk && !portOk);
     $('rule-err').textContent = msg;
     if (msg){ log('err', msg); return; }
-    socket.emit('add_firewall_rule', { ip, port, action: state.action });
+    socket.emit('add_firewall_rule', { ip, port, proto: state.proto, action: state.action, duration: $('rule-exp').value });
     $('rule-ip').value = ''; $('rule-port').value = ''; renderPreview();
   });
   ['rule-ip', 'rule-port'].forEach(id => $(id).addEventListener('input', () => { $(id).classList.remove('bad'); $('rule-err').textContent = ''; renderPreview(); }));
   const setSeg = (on, off) => { on.setAttribute('aria-pressed', 'true'); off.setAttribute('aria-pressed', 'false'); };
   $('act-deny').onclick = () => { state.action = 'deny'; setSeg($('act-deny'), $('act-allow')); renderPreview(); };
   $('act-allow').onclick = () => { state.action = 'allow'; setSeg($('act-allow'), $('act-deny')); renderPreview(); };
+  $('proto-tcp').onclick = () => { state.proto = 'tcp'; setSeg($('proto-tcp'), $('proto-udp')); renderPreview(); };
+  $('proto-udp').onclick = () => { state.proto = 'udp'; setSeg($('proto-udp'), $('proto-tcp')); renderPreview(); };
 
   renderRules(); renderResults(); renderPreview();
 })();

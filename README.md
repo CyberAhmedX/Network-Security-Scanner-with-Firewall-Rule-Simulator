@@ -39,14 +39,20 @@ pip install -r requirements.txt
 ## Features
 
 **Flexible Scanning**
-- Scan an IP address, a CIDR range or a hostname
+- Scan an IP address, a CIDR range (up to a /22) or a hostname
 - TCP SYN scan, TCP connect scan, UDP scan and service version detection
+- Scans run in the background: ranges are scanned in batches of 16 hosts with a live progress bar and a **Stop** button
+- **Scan diff:** each scan is compared with the last one of the same target and type, flagging new open ports and ports that closed
+- **Export** results as CSV or JSON (spreadsheet formula injection is neutralized in CSV)
 
 **Simulated + Real Firewall Enforcement**
-- Add allow or deny rules by IP and port
+- Add allow or deny rules by source IP or CIDR range, single port or port range, TCP or UDP
 - When run with admin/root privileges, deny rules are applied as real `netsh` (Windows) or `iptables` (Linux) rules, actually blocking traffic at the OS level
 - Without admin/root privileges, rules still work in the simulation and are labeled "simulated only"
 - Remove rules dynamically, real and simulated
+- **Auto-expiry:** rules can expire after 15 minutes, 1 hour or 24 hours, and are removed from the OS firewall on time
+- **Block log:** every rule added, removed, expired or restored is written to `state/block_log.jsonl`, an audit trail that survives restarts
+- **Persistence:** rules are saved to `state/firewall_rules.json` and restored on startup. If an OS rule went missing (for example, Linux clears iptables on reboot), it is re-applied; rules that expired while the app was off are removed
 - Visualize rule impact on live scan results: ports keep their real Nmap state (open, closed, filtered) unless a deny rule marks them Blocked
 
 **Operator Console UI**
@@ -56,7 +62,7 @@ pip install -r requirements.txt
 - One-click **Block** and **Unblock** on each scanned port
 - Preview of the exact `iptables` or `netsh` command before a rule is added
 - Timestamped activity log of scans, rules and errors
-- Rules are restored after a page reload, and the layout adapts to narrow browser windows
+- Rules and the block log are restored after a page reload, and the layout adapts to narrow browser windows
 
 ---
 
@@ -90,18 +96,18 @@ Then open `http://127.0.0.1:5000` in your browser:
 
 **Full dashboard: a port blocked by a real iptables rule**
 ![Dashboard with a blocked port](docs/screenshots/04-port-blocked.png)
-Rescanning after the block, Nmap reports port 8080 as filtered, because the OS firewall now drops the probe.
+Rescanning after the block, port 8080 no longer shows as open, because the OS firewall now drops the scanner's probes too.
 
 **Live scan in progress**
 ![Scan in progress](docs/screenshots/01-scan-running.png)
 
-**Scan results with service version detection**
+**Scan compared with the last one: a new open port flagged**
 ![Scan results](docs/screenshots/02-scan-results.png)
 
-**Adding a firewall rule, with the exact command previewed**
+**Adding a subnet and port-range rule with a 1 hour expiry, with the exact command previewed**
 ![Adding a firewall rule](docs/screenshots/03-add-rule.png)
 
-**Activity log of scans and the firewall commands that ran**
+**Activity log: scans, new-port warnings and the firewall commands that ran**
 ![Activity log](docs/screenshots/05-activity-log.png)
 
 ---
@@ -121,8 +127,9 @@ The first version built firewall commands from user input and ran them with `she
 
 - Real firewall rule application currently only supports Windows (`netsh`) and Linux (`iptables`); no macOS support yet.
 - SYN and UDP scans require admin/root privileges (an Nmap requirement). TCP connect scans work without them.
-- Rules applied to the OS firewall stay in place if the app is closed. Remove them in the app first, or delete them manually.
-- Each scan runs in the request handler, so the UI waits for a long scan (for example UDP) to finish.
+- A scan can only be stopped between batches, so a single host scan runs until Nmap finishes.
+- Blocking an address range that includes your own machine also hides those ports from your own scans, since the OS firewall drops the scanner's probes too.
+- Rules created with a different OS user or outside the app are not tracked. The app only manages rules it created.
 
 ---
 
