@@ -1,4 +1,4 @@
-# 🌐 Network Security Scanner with Firewall Rule Simulator
+# Network Security Scanner with Firewall Rule Simulator
 
 A real-time network security scanner and traffic control simulator built with **Python (Flask)**, **Flask-SocketIO**, and **Nmap**. Built to understand how network scanning and firewall logic actually work under the hood, the same core concepts used in tools like Nmap and pfSense, through a fully interactive, live web interface.
 
@@ -17,7 +17,7 @@ I built this to go beyond just using scanning tools like Nmap and firewall inter
 
 ---
 
-## 🔧 Installation
+## Installation
 
 ### Requirements
 
@@ -36,29 +36,29 @@ pip install Flask Flask-SocketIO python-nmap
 
 ---
 
-## 💡 Features
+## Features
 
-**🔍 Flexible Scanning**
+**Flexible Scanning**
 - TCP SYN scan
 - UDP scan
 - Service version detection
 
-**🛡️ Simulated + Real Firewall Enforcement**
+**Simulated + Real Firewall Enforcement**
 - Add allow or deny rules by IP and port
 - When run with admin/root privileges, deny rules are applied as real `netsh` (Windows) or `iptables` (Linux) rules, actually blocking traffic at the OS level
 - Remove rules dynamically, real and simulated
 - Visualize rule impact on live scan results
 - When run with administrator/root privileges, deny rules can enforce real OS-level port blocking, not just simulated visualization
 
-**⚡ Real-Time UI**
+**Real-Time UI**
 - WebSocket-driven updates, no manual refresh needed
 
-**🌙 Dark UI Theme**
+**Dark UI Theme**
 - Responsive, accessible interface
 
 ---
 
-## 🚀 How to Use
+## How to Use
 
 ```bash
 python app.py
@@ -74,7 +74,7 @@ Then open `http://127.0.0.1:5000` in your browser:
 
 ---
 
-## 🎯 Use Cases
+## Use Cases
 
 - Networking and cybersecurity education
 - Visual demonstration of firewall rule behavior
@@ -82,7 +82,7 @@ Then open `http://127.0.0.1:5000` in your browser:
 
 ---
 
-## 📸 Project Outputs
+## Project Outputs
 
 **Live port scan in progress**
 ![Live scan results](https://github.com/user-attachments/assets/835452ad-53fe-4a72-95fb-2d10ef137244)
@@ -107,7 +107,7 @@ Then open `http://127.0.0.1:5000` in your browser:
 
 ---
 
-## ⚠️ Known Limitations
+## Known Limitations
 
 - Firewall rule commands are built from user input and passed through `shell=True`, without input sanitization. This is a command injection risk if the tool were ever exposed beyond a local, trusted environment. Fine for the educational/local scope this was built for, but a good example of why input validation matters before anything like this touches a real network-facing service.
 - Real firewall rule application currently only supports Windows (`netsh`) and Linux (`iptables`); no macOS support yet.
