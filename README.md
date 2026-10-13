@@ -88,26 +88,23 @@ Then open `http://127.0.0.1:5000` in your browser:
 
 ## Project Outputs
 
-**Live port scan in progress**
-![Live scan results](https://github.com/user-attachments/assets/835452ad-53fe-4a72-95fb-2d10ef137244)
+**Full dashboard: a port blocked by a real iptables rule**
+![Dashboard with a blocked port](docs/screenshots/04-port-blocked.png)
 
-**Scan results with service detection**
-![Scan results](https://github.com/user-attachments/assets/ed408bd8-2899-46ca-8602-b859de911bfe)
+**Live scan in progress**
+![Scan in progress](docs/screenshots/01-scan-running.png)
 
-**Adding a firewall rule**
-![Adding firewall rule](https://github.com/user-attachments/assets/49be1d39-80d7-42fe-aebe-13d4cb53d3bb)
+**Scan results with service version detection**
+![Scan results](docs/screenshots/02-scan-results.png)
 
-**Firewall rule applied to live traffic**
-![Firewall rule applied](https://github.com/user-attachments/assets/07933a1b-165b-4cea-849f-f09c5c352c77)
+**Adding a firewall rule, with the exact command previewed**
+![Adding a firewall rule](docs/screenshots/03-add-rule.png)
 
-**Blocked traffic view**
-![Blocked traffic](https://github.com/user-attachments/assets/79158ad0-aad9-4f6c-84ff-d94dbcddc1f8)
+**Activity log of scans and the firewall commands that ran**
+![Activity log](docs/screenshots/05-activity-log.png)
 
-**Rule management panel**
-![Rule management](https://github.com/user-attachments/assets/34830946-a0d8-4aa3-b48e-ab47cb8dab94)
-
-**Full dashboard view**
-![Full dashboard](https://github.com/user-attachments/assets/2d6fa1e7-99c5-4385-b029-829c15bc797a)
+**Phone layout.** With the deny rule active, Nmap now reports port 8080 as filtered, because the OS firewall drops the probe.
+<img src="docs/screenshots/06-mobile.png" alt="Phone layout" width="320">
 
 ---
 
