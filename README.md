@@ -128,7 +128,7 @@ The first version built firewall commands from user input and ran them with `she
 - Real firewall rule application currently only supports Windows (`netsh`) and Linux (`iptables`); no macOS support yet.
 - SYN and UDP scans require admin/root privileges (an Nmap requirement). TCP connect scans work without them.
 - A scan can only be stopped between batches, so a single host scan runs until Nmap finishes.
-- Blocking an address range that includes your own machine also hides those ports from your own scans, since the OS firewall drops the scanner's probes too.
+- Blocking an address range that includes your own machine also hides those ports from your own scans, since the OS firewall drops the scanner's probes too. The app warns you before you add such a rule and keeps the warning on the rule.
 - Rules created with a different OS user or outside the app are not tracked. The app only manages rules it created.
 
 ---

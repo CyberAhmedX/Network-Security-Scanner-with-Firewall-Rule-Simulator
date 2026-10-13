@@ -3,6 +3,7 @@ import json
 import os
 import platform
 import re
+import socket
 import subprocess
 import threading
 import time
@@ -129,8 +130,38 @@ def is_privileged():
     return hasattr(os, 'geteuid') and os.geteuid() == 0
 
 
+def local_addresses():
+    """This computer's own IP addresses: loopback plus its network addresses."""
+    addrs = {'127.0.0.1', '::1'}
+    try:
+        addrs.update(socket.gethostbyname_ex(socket.gethostname())[2])
+    except OSError:
+        pass
+    try:
+        # Connecting a UDP socket sends nothing; it only picks the outgoing interface
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
+            s.connect(('192.0.2.1', 9))
+            addrs.add(s.getsockname()[0])
+    except OSError:
+        pass
+    return sorted(addrs)
+
+
+def covered_local_addresses(rule):
+    """Local addresses a deny rule would block. Scans from this computer use them as their source,
+    so the OS firewall would drop the scanner's own probes and hide those ports."""
+    if rule['action'] != 'deny':
+        return []
+    try:
+        net = ipaddress.ip_network(rule['ip'], strict=False)
+    except ValueError:
+        return []
+    return [a for a in local_addresses() if ipaddress.ip_address(a) in net]
+
+
 def server_info():
-    return {'os': platform.system(), 'privileged': is_privileged(), 'max_scan_hosts': MAX_SCAN_HOSTS}
+    return {'os': platform.system(), 'privileged': is_privileged(), 'max_scan_hosts': MAX_SCAN_HOSTS,
+            'local_addresses': local_addresses()}
 
 
 def load_json(path, default):
@@ -281,6 +312,7 @@ def restore_rules():
     privileged = is_privileged()
     for rule in load_json(RULES_FILE, []):
         rule.setdefault('proto', 'tcp')
+        rule['covers_self'] = covered_local_addresses(rule)
         if rule.get('expires_at') and rule['expires_at'] <= now:
             if rule['action'] == 'deny' and rule.get('enforced'):
                 _, rule['last_command'] = apply_os_rule('delete', rule)
@@ -486,6 +518,7 @@ def handle_firewall_rule(data):
     rule = {'id': uuid.uuid4().hex[:8], 'ip': rule_ip, 'port': low if low == high else f'{low}-{high}',
             'port_lo': low, 'port_hi': high, 'proto': proto, 'action': rule_action,
             'created_at': time.time(), 'expires_at': time.time() + seconds if seconds else None}
+    rule['covers_self'] = covered_local_addresses(rule)
 
     # Deny rules are enforced at the OS level when the app has admin/root rights.
     # Without them the rule still works in the simulation, and the UI says so.

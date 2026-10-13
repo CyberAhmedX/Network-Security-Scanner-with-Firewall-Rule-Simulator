@@ -81,6 +81,7 @@ select.field{padding:8px 9px; cursor:pointer}
 .scan-actions .btn.stop{color:var(--blocked)}
 .cmd{background:var(--inset); border:1px dashed var(--line); border-radius:8px; padding:9px 11px; font-family:var(--mono); font-size:11.5px; color:var(--muted); white-space:normal; overflow-wrap:anywhere}
 .cmd .p{color:var(--dim); user-select:none}
+.selfwarn{margin:-4px 0 0; font-size:12px; color:var(--filtered)}
 
 /* rules */
 .rules{list-style:none; margin:0; padding:0; border-top:1px solid var(--line)}
@@ -93,6 +94,7 @@ select.field{padding:8px 9px; cursor:pointer}
 .rule .rmeta{display:block; font-family:var(--mono); font-size:11px; color:var(--dim); margin-top:2px}
 .rule .rmeta.on{color:var(--open)} .rule .rmeta.sim{color:var(--filtered)}
 .rule .rmeta .exp{color:var(--muted)}
+.rule .rmeta.self{color:var(--filtered)}
 .x{border:0; background:transparent; color:var(--dim); cursor:pointer; padding:6px 8px; border-radius:6px; font-family:var(--mono)}
 .x:hover{color:var(--blocked); background:rgba(232,84,74,.1)}
 .empty{padding:18px 16px; color:var(--dim); font-size:13px}
@@ -225,6 +227,7 @@ tbody tr.new{animation:rowin .4s ease}
         </div>
         <div class="err" id="rule-err" role="alert" style="margin-top:-6px"></div>
         <div class="cmd" id="cmd-preview" aria-live="polite"></div>
+        <p class="selfwarn" id="self-warn" hidden></p>
       </form>
       <ul class="rules" id="rules"></ul>
     </section>
@@ -272,7 +275,7 @@ tbody tr.new{animation:rowin .4s ease}
 <script>
 (() => {
   const $ = id => document.getElementById(id);
-  const state = { os: '', privileged: false, action: 'deny', proto: 'tcp', ports: [], rules: [],
+  const state = { os: '', privileged: false, local: [], action: 'deny', proto: 'tcp', ports: [], rules: [],
                   scanning: false, scanned: false, scanFailed: false, newKeys: new Set(), lastScan: null };
   $('host').textContent = location.host;
 
@@ -313,15 +316,19 @@ tbody tr.new{animation:rowin .4s ease}
     if (p.length !== 4 || p.some(x => !/^\d+$/.test(x) || +x > 255)) return null;
     return p.reduce((n, x) => n * 256 + +x, 0);
   }
-  function covers(rule, p){
-    if ((rule.proto || 'tcp') !== p.proto || p.port < rule.port_lo || p.port > rule.port_hi) return false;
-    if (rule.ip === p.ip) return true;
-    const [net, bits] = rule.ip.split('/');
-    const a = ip4(net), b = ip4(p.ip);
-    if (bits === undefined || a === null || b === null) return false;  // IPv6 ranges: exact match only here
+  function inSource(source, ip){
+    if (source === ip) return true;
+    const [net, bits] = source.split('/');
+    const a = ip4(net), b = ip4(ip);
+    if (bits === undefined || a === null || b === null || !/^\d+$/.test(bits) || +bits > 32) return false;  // IPv6 ranges: exact match only here
     const size = 2 ** (32 - +bits);
     return Math.floor(a / size) === Math.floor(b / size);
   }
+  function covers(rule, p){
+    if ((rule.proto || 'tcp') !== p.proto || p.port < rule.port_lo || p.port > rule.port_hi) return false;
+    return inSource(rule.ip, p.ip);
+  }
+  const selfText = addrs => `Includes this computer (${addrs.join(', ')}). Your own scans won't see these ports while this rule is active.`;
   function blockingRule(p){
     for (const r of state.rules){
       if (covers(r, p)) return r.action === 'deny' ? r : null;  // first match wins
@@ -351,6 +358,10 @@ tbody tr.new{animation:rowin .4s ease}
     const cmd = ports ? command(ip, ports[0], ports[1], state.proto, state.action) : command(ip, '<port>', '<port>', state.proto, state.action);
     if (!cmd){ box.append(el('span', 'p', `${state.os || 'This system'} has no supported OS firewall: rules are simulated`)); return; }
     box.append(el('span', 'p', state.privileged ? (state.os === 'Windows' ? 'PS> ' : '# ') : 'simulated, not run: '), cmd.join(' '));
+    const src = $('rule-ip').value.trim();
+    const hits = state.action === 'deny' && src ? state.local.filter(a => inSource(src, a)) : [];
+    $('self-warn').hidden = !hits.length;
+    $('self-warn').textContent = hits.length ? selfText(hits) : '';
   }
 
   /* ---- results ---- */
@@ -440,6 +451,7 @@ tbody tr.new{animation:rowin .4s ease}
       else meta = el('span', 'rmeta', r.enforced ? 'removed matching OS block' : 'simulation');
       if (r.expires_at){ meta.append(' · '); meta.append(el('span', 'exp', `expires in ${timeLeft(r.expires_at)}`)); }
       what.append(meta);
+      if (r.covers_self && r.covers_self.length) what.append(el('span', 'rmeta self', selfText(r.covers_self)));
       const x = el('button', 'x', '✕'); x.type = 'button';
       x.setAttribute('aria-label', `Remove rule ${i + 1}`);
       x.onclick = () => socket.emit('remove_firewall_rule', { rule_id: r.id });
@@ -458,7 +470,7 @@ tbody tr.new{animation:rowin .4s ease}
     log('err', 'Lost connection to the server. Is app.py still running?');
   });
   socket.on('server_info', info => {
-    state.os = info.os; state.privileged = info.privileged;
+    state.os = info.os; state.privileged = info.privileged; state.local = info.local_addresses || [];
     $('priv-dot').className = 'dot ' + (info.privileged ? 'on' : 'warn');
     $('priv-text').textContent = '';
     const who = info.os === 'Windows' ? (info.privileged ? 'admin' : 'user') : (info.privileged ? 'root' : 'user');
@@ -505,6 +517,7 @@ tbody tr.new{animation:rowin .4s ease}
     $('scan-err').textContent = data.message; $('scan-meta').textContent = 'scan failed';
     log('err', data.message);
   });
+  socket.on('firewall_rule_added', r => { if (r.covers_self && r.covers_self.length) log('warn', `Rule ${r.ip} → ${r.port}/${r.proto}: ${selfText(r.covers_self)}`); });
   socket.on('firewall_error', d => { $('rule-err').textContent = d.message; log('err', d.message); });
 
   /* ---- scan diff ---- */
