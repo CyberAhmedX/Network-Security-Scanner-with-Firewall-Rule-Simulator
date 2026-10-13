@@ -300,10 +300,11 @@ socket.on('firewall_rule_added', function(data) {
     firewallRules.push({
         ip: data.ip,
         port: data.port,
-        action: data.action
+        action: data.action,
+        enforced: data.enforced
     });
 
-    const ruleText = `Rule: ${data.action.toUpperCase()} traffic for IP ${data.ip} on port ${data.port}`;
+    const ruleText = ruleLabel(data);
     const ruleDiv = document.createElement('div');
     ruleDiv.textContent = ruleText;
     document.getElementById('flow-visualization').appendChild(ruleDiv);
@@ -323,13 +324,22 @@ socket.on('firewall_error', function(data) {
     alert('Firewall Error: ' + data.message);
 });
 
+// Text for one rule; deny rules that couldn't be applied to the OS firewall are marked
+function ruleLabel(rule) {
+    let text = `Rule: ${rule.action.toUpperCase()} traffic for IP ${rule.ip} on port ${rule.port}`;
+    if (rule.action === 'deny' && !rule.enforced) {
+        text += ' (simulated only: run as admin/root to enforce)';
+    }
+    return text;
+}
+
 // Update firewall visualization
 function updateFirewallVisualization() {
     const flowDiv = document.getElementById('flow-visualization');
     flowDiv.innerHTML = '<h3>Traffic Flow:</h3><p>Current status of traffic based on firewall rules.</p>';
 
     firewallRules.forEach((rule) => {
-        const ruleText = `Rule: ${rule.action.toUpperCase()} traffic for IP ${rule.ip} on port ${rule.port}`;
+        const ruleText = ruleLabel(rule);
         const ruleDiv = document.createElement('div');
         ruleDiv.textContent = ruleText;
         flowDiv.appendChild(ruleDiv);
@@ -339,6 +349,12 @@ function updateFirewallVisualization() {
 // Scan completion
 socket.on('scan_complete', function() {
     document.getElementById('scan-animation').style.display = 'none';
+});
+
+// Scan errors (invalid target, missing privileges)
+socket.on('scan_error', function(data) {
+    document.getElementById('scan-animation').style.display = 'none';
+    alert('Scan Error: ' + data.message);
 });
 
 </script>

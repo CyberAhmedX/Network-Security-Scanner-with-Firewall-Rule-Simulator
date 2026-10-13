@@ -31,7 +31,7 @@ I built this to go beyond just using scanning tools like Nmap and firewall inter
 ### Setup
 
 ```bash
-pip install Flask Flask-SocketIO python-nmap
+pip install -r requirements.txt
 ```
 
 ---
@@ -46,9 +46,9 @@ pip install Flask Flask-SocketIO python-nmap
 **Simulated + Real Firewall Enforcement**
 - Add allow or deny rules by IP and port
 - When run with admin/root privileges, deny rules are applied as real `netsh` (Windows) or `iptables` (Linux) rules, actually blocking traffic at the OS level
+- Without admin/root privileges, rules still work in the simulation and are labeled "simulated only"
 - Remove rules dynamically, real and simulated
-- Visualize rule impact on live scan results
-- When run with administrator/root privileges, deny rules can enforce real OS-level port blocking, not just simulated visualization
+- Visualize rule impact on live scan results: ports keep their real Nmap state (open, closed, filtered) unless a deny rule marks them Blocked
 
 **Real-Time UI**
 - WebSocket-driven updates, no manual refresh needed
@@ -107,10 +107,23 @@ Then open `http://127.0.0.1:5000` in your browser:
 
 ---
 
+## Security
+
+The first version built firewall commands from user input and ran them with `shell=True`, a command injection risk. I found it in a self-review and fixed it:
+
+- IP addresses, ports, rule actions and scan targets are validated before use (Python's `ipaddress` module, port range 1-65535, allow/deny only)
+- Firewall commands are passed as argument lists with no shell, so input can't be interpreted as extra commands
+- On Linux, `sudo -n` fails cleanly instead of hanging on a password prompt
+- The server binds to `127.0.0.1` with Flask's debugger turned off
+
+---
+
 ## Known Limitations
 
-- Firewall rule commands are built from user input and passed through `shell=True`, without input sanitization. This is a command injection risk if the tool were ever exposed beyond a local, trusted environment. Fine for the educational/local scope this was built for, but a good example of why input validation matters before anything like this touches a real network-facing service.
 - Real firewall rule application currently only supports Windows (`netsh`) and Linux (`iptables`); no macOS support yet.
+- SYN and UDP scans require admin/root privileges (an Nmap requirement). TCP connect scans work without them.
+- Rules applied to the OS firewall stay in place if the app is closed. Remove them in the app first, or delete them manually.
+- Each scan runs in the request handler, so the UI waits for a long scan (for example UDP) to finish.
 
 ---
 

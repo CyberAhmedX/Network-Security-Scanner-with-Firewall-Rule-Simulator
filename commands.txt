@@ -1,5 +1,0 @@
-pip install Flask Flask-SocketIO python-nmap
-
-npm install socket.io
-
-npm install nmap
