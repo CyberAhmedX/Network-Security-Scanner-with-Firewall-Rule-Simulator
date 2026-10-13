@@ -56,7 +56,7 @@ pip install -r requirements.txt
 - One-click **Block** and **Unblock** on each scanned port
 - Preview of the exact `iptables` or `netsh` command before a rule is added
 - Timestamped activity log of scans, rules and errors
-- Rules are restored after a page reload, and the layout works on phones
+- Rules are restored after a page reload, and the layout adapts to narrow browser windows
 
 ---
 
@@ -90,6 +90,7 @@ Then open `http://127.0.0.1:5000` in your browser:
 
 **Full dashboard: a port blocked by a real iptables rule**
 ![Dashboard with a blocked port](docs/screenshots/04-port-blocked.png)
+Rescanning after the block, Nmap reports port 8080 as filtered, because the OS firewall now drops the probe.
 
 **Live scan in progress**
 ![Scan in progress](docs/screenshots/01-scan-running.png)
@@ -102,9 +103,6 @@ Then open `http://127.0.0.1:5000` in your browser:
 
 **Activity log of scans and the firewall commands that ran**
 ![Activity log](docs/screenshots/05-activity-log.png)
-
-**Phone layout.** With the deny rule active, Nmap now reports port 8080 as filtered, because the OS firewall drops the probe.
-<img src="docs/screenshots/06-mobile.png" alt="Phone layout" width="320">
 
 ---
 
