@@ -114,4 +114,6 @@ Then open `http://127.0.0.1:5000` in your browser:
 
 ---
 
-This project is intended for educational and personal use. Feel free to modify and extend it.
+## License
+
+Released under the [MIT License](LICENSE). Intended for educational and personal use. Feel free to modify and extend it.
