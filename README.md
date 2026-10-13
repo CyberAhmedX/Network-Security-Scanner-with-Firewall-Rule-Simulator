@@ -39,9 +39,8 @@ pip install -r requirements.txt
 ## Features
 
 **Flexible Scanning**
-- TCP SYN scan
-- UDP scan
-- Service version detection
+- Scan an IP address, a CIDR range or a hostname
+- TCP SYN scan, TCP connect scan, UDP scan and service version detection
 
 **Simulated + Real Firewall Enforcement**
 - Add allow or deny rules by IP and port
@@ -50,11 +49,14 @@ pip install -r requirements.txt
 - Remove rules dynamically, real and simulated
 - Visualize rule impact on live scan results: ports keep their real Nmap state (open, closed, filtered) unless a deny rule marks them Blocked
 
-**Real-Time UI**
+**Operator Console UI**
 - WebSocket-driven updates, no manual refresh needed
-
-**Dark UI Theme**
-- Responsive, accessible interface
+- Header shows the connection, the OS and whether the app is running with admin/root rights
+- Color-coded port states with open / filtered / closed / blocked counts
+- One-click **Block** and **Unblock** on each scanned port
+- Preview of the exact `iptables` or `netsh` command before a rule is added
+- Timestamped activity log of scans, rules and errors
+- Rules are restored after a page reload, and the layout works on phones
 
 ---
 
@@ -64,13 +66,15 @@ pip install -r requirements.txt
 python app.py
 ```
 
+Run it with `sudo` (Linux) or from an Administrator terminal (Windows) to enforce rules at the OS level.
+
 Then open `http://127.0.0.1:5000` in your browser:
 
-1. Enter a target IP address or hostname
-2. Select a scan type (TCP, UDP, or version detection)
-3. Click **Start Scan**
-4. Add firewall rules to block or allow specific traffic
-5. Watch results update live as rules are applied
+1. Enter a target IP address, CIDR range or hostname
+2. Pick a scan type and click **Start scan**
+3. Press **Block** on an open port, or add a rule by source IP and port
+4. Watch the port change to Blocked, and check the activity log for the command that ran
+5. Press **Unblock** or the ✕ next to a rule to remove it
 
 ---
 

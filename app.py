@@ -61,9 +61,33 @@ def parse_port(value):
     return port if 1 <= port <= 65535 else None
 
 
+# ---------- environment ----------
+
+def is_privileged():
+    """True when running as root (Linux) or Administrator (Windows)."""
+    if platform.system() == 'Windows':
+        try:
+            import ctypes
+            return bool(ctypes.windll.shell32.IsUserAnAdmin())
+        except Exception:
+            return False
+    return hasattr(os, 'geteuid') and os.geteuid() == 0
+
+
+def server_info():
+    return {'os': platform.system(), 'privileged': is_privileged()}
+
+
 @app.route('/')
 def index():
     return render_template('index.html')
+
+
+@socketio.on('connect')
+def handle_connect():
+    # Tell the page what it's running against, and restore the current rules after a reload
+    emit('server_info', server_info())
+    emit('rules_update', firewall_rules)
 
 
 # Handle scan request
@@ -88,11 +112,15 @@ def handle_scan(data):
     for host in nm.all_hosts():
         for proto in nm[host].all_protocols():
             for port in nm[host][proto].keys():
+                info = nm[host][proto][port]
                 scan_results.append({
                     'ip': host,
                     'port': port,
-                    'service': nm[host][proto][port]['name'],
-                    'status': nm[host][proto][port]['state']
+                    'proto': proto,
+                    'service': info.get('name', ''),
+                    'version': ' '.join(x for x in (info.get('product', ''), info.get('version', '')) if x),
+                    'state': info['state'],
+                    'status': info['state'],
                 })
 
     # Apply firewall rules and simulate traffic flow
@@ -111,7 +139,7 @@ def handle_scan(data):
         })
 
     # Emit scan complete event to hide animation
-    emit('scan_complete')
+    emit('scan_complete', {'target': target, 'arguments': arguments, 'count': len(scan_results)})
 
 
 # ---------- real firewall enforcement ----------
@@ -125,30 +153,37 @@ def _run(cmd):
         return False
 
 
-def add_real_firewall_rule(ip, port, action):
-    """Apply (deny) or remove (allow) a real OS firewall rule.
+def firewall_command(ip, port, action):
+    """Argument list that applies (deny) or removes (allow) the OS firewall rule.
 
-    ip and port must already be validated. Arguments are passed as a list,
-    never through a shell, so input can't be interpreted as extra commands.
-    Returns True if the OS firewall was changed.
+    ip and port must already be validated. Returns None on unsupported systems.
     """
     system = platform.system()
     if system == 'Windows':
         rule_name = f"Block_{ip}_{port}"
         if action == 'deny':
-            return _run(['netsh', 'advfirewall', 'firewall', 'add', 'rule', f'name={rule_name}',
-                         'dir=in', 'action=block', 'protocol=TCP',
-                         f'remoteip={ip}', f'localport={port}'])
-        return _run(['netsh', 'advfirewall', 'firewall', 'delete', 'rule', f'name={rule_name}'])
-
+            return ['netsh', 'advfirewall', 'firewall', 'add', 'rule', f'name={rule_name}',
+                    'dir=in', 'action=block', 'protocol=TCP', f'remoteip={ip}', f'localport={port}']
+        return ['netsh', 'advfirewall', 'firewall', 'delete', 'rule', f'name={rule_name}']
     if system == 'Linux':
-        # -n: fail instead of waiting for a password prompt when not run as root
-        prefix = [] if os.geteuid() == 0 else ['sudo', '-n']
         flag = '-A' if action == 'deny' else '-D'
-        return _run(prefix + ['iptables', flag, 'INPUT', '-p', 'tcp', '--dport', str(port),
-                              '-s', ip, '-j', 'DROP'])
+        return ['iptables', flag, 'INPUT', '-p', 'tcp', '--dport', str(port), '-s', ip, '-j', 'DROP']
+    return None
 
-    return False
+
+def add_real_firewall_rule(ip, port, action):
+    """Apply (deny) or remove (allow) a real OS firewall rule.
+
+    Arguments are passed as a list, never through a shell, so input can't be
+    interpreted as extra commands. Returns True if the OS firewall was changed.
+    """
+    cmd = firewall_command(ip, port, action)
+    if cmd is None:
+        return False
+    if cmd[0] == 'iptables' and os.geteuid() != 0:
+        # -n: fail instead of waiting for a password prompt when not run as root
+        cmd = ['sudo', '-n'] + cmd
+    return _run(cmd)
 
 
 # Handle firewall rule creation
@@ -171,12 +206,15 @@ def handle_firewall_rule(data):
     # Deny rules are enforced at the OS level when the app has admin/root rights.
     # Without them the rule still works in the simulation, and the UI says so.
     enforced = add_real_firewall_rule(rule_ip, rule_port, rule_action)
+    cmd = firewall_command(rule_ip, rule_port, rule_action)
 
-    rule = {'ip': rule_ip, 'port': rule_port, 'action': rule_action, 'enforced': enforced}
+    rule = {'ip': rule_ip, 'port': rule_port, 'action': rule_action, 'enforced': enforced,
+            'command': ' '.join(cmd) if cmd else ''}
     firewall_rules.append(rule)
 
     # Emit the rule to the frontend for visualization
     emit('firewall_rule_added', rule)
+    emit('rules_update', firewall_rules)
 
 
 @socketio.on('remove_firewall_rule')
@@ -188,12 +226,15 @@ def handle_remove_firewall_rule(data):
 
     if 0 <= rule_number < len(firewall_rules):
         rule = firewall_rules.pop(rule_number)
+        command = ''
 
         # Remove the real firewall rule if one was applied
         if rule['action'] == 'deny' and rule['enforced']:
             add_real_firewall_rule(rule['ip'], rule['port'], 'allow')
+            command = ' '.join(firewall_command(rule['ip'], rule['port'], 'allow'))
 
-        emit('firewall_rule_removed', {'rule_number': rule_number + 1})
+        emit('firewall_rule_removed', {'rule_number': rule_number + 1, 'rule': rule, 'command': command})
+        emit('rules_update', firewall_rules)
     else:
         emit('firewall_error', {'message': 'Invalid rule number'})
 
@@ -202,11 +243,13 @@ def handle_remove_firewall_rule(data):
 def simulate_traffic(scan_results):
     """Mark ports covered by a deny rule as Blocked; others keep their Nmap state."""
     for result in scan_results:
+        result['blocked'] = False
         for rule in firewall_rules:
             # First matching rule wins, like most firewalls
             if rule['ip'] == result['ip'] and rule['port'] == result['port']:
                 if rule['action'] == 'deny':
                     result['status'] = 'Blocked'
+                    result['blocked'] = True
                 break
 
 
