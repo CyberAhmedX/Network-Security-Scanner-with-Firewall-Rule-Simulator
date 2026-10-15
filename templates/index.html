@@ -329,25 +329,24 @@ tbody tr.new{animation:rowin .4s ease}
     return inSource(rule.ip, p.ip);
   }
   const selfText = addrs => `Includes this computer (${addrs.join(', ')}). Your own scans won't see these ports while this rule is active.`;
+  // Allow rules win over deny rules, the same way app.py and the OS firewall apply them
   function blockingRule(p){
-    for (const r of state.rules){
-      if (covers(r, p)) return r.action === 'deny' ? r : null;  // first match wins
-    }
-    return null;
+    const matching = state.rules.filter(r => covers(r, p));
+    if (matching.some(r => r.action === 'allow')) return null;
+    return matching.find(r => r.action === 'deny') || null;
   }
 
   /* ---- command preview, same arguments app.py builds ---- */
   function command(ip, lo, hi, proto, action){
     if (state.os === 'Windows'){
       const ports = lo === hi ? `${lo}` : `${lo}-${hi}`;
-      const name = `name=Block_${ip.replace('/', '_')}_${ports}_${proto}`;
-      return action === 'deny'
-        ? ['netsh','advfirewall','firewall','add','rule',name,'dir=in','action=block',`protocol=${proto.toUpperCase()}`,`remoteip=${ip}`,`localport=${ports}`]
-        : ['netsh','advfirewall','firewall','delete','rule',name];
+      return ['netsh','advfirewall','firewall','add','rule',`name=NetScanner-${action}-<id>`,'dir=in',
+              `action=${action === 'deny' ? 'block' : 'allow'}`,`protocol=${proto.toUpperCase()}`,`remoteip=${ip}`,`localport=${ports}`];
     }
     if (state.os === 'Linux'){
       const ports = lo === hi ? `${lo}` : `${lo}:${hi}`;
-      return ['iptables', action === 'deny' ? '-A' : '-D', 'INPUT', '-p', proto, '--dport', ports, '-s', ip, '-j', 'DROP'];
+      const where = action === 'deny' ? ['-A', 'INPUT'] : ['-I', 'INPUT', '1'];  // ACCEPT goes to the top so it wins
+      return ['iptables', ...where, '-p', proto, '--dport', ports, '-s', ip, '-j', action === 'deny' ? 'DROP' : 'ACCEPT'];
     }
     return null;
   }
@@ -358,6 +357,8 @@ tbody tr.new{animation:rowin .4s ease}
     const cmd = ports ? command(ip, ports[0], ports[1], state.proto, state.action) : command(ip, '<port>', '<port>', state.proto, state.action);
     if (!cmd){ box.append(el('span', 'p', `${state.os || 'This system'} has no supported OS firewall: rules are simulated`)); return; }
     box.append(el('span', 'p', state.privileged ? (state.os === 'Windows' ? 'PS> ' : '# ') : 'simulated, not run: '), cmd.join(' '));
+    if (state.os === 'Windows' && state.action === 'allow')
+      box.append(el('span', 'p', ' · then rewrites overlapping block rules without this range, since Windows lets a block win over an allow'));
     const src = $('rule-ip').value.trim();
     const hits = state.action === 'deny' && src ? state.local.filter(a => inSource(src, a)) : [];
     $('self-warn').hidden = !hits.length;
@@ -393,9 +394,12 @@ tbody tr.new{animation:rowin .4s ease}
       if (rule){
         const n = state.rules.indexOf(rule) + 1;
         const exact = rule.ip === p.ip && rule.port_lo === p.port && rule.port_hi === p.port;
-        const b = el('button', 'mini un', exact ? 'Unblock' : `Remove rule ${n}`); b.type = 'button';
-        if (!exact) b.title = `Rule ${n} covers ${rule.ip} → ${rule.port}/${rule.proto}`;
-        b.onclick = () => socket.emit('remove_firewall_rule', { rule_id: rule.id });
+        // A rule for just this port is removed; inside a wider rule, an allow rule opens only this port
+        const b = el('button', 'mini un', exact ? 'Unblock' : 'Allow'); b.type = 'button';
+        if (!exact) b.title = `Rule ${n} blocks ${rule.ip} → ${rule.port}/${rule.proto}. Allow opens just ${p.ip}:${p.port} and keeps the rest blocked.`;
+        b.onclick = exact
+          ? () => socket.emit('remove_firewall_rule', { rule_id: rule.id })
+          : () => socket.emit('add_firewall_rule', { ip: p.ip, port: p.port, proto: p.proto, action: 'allow', duration: $('rule-exp').value });
         act.append(b);
       } else if (String(p.state).startsWith('open')){
         const b = el('button', 'mini', 'Block'); b.type = 'button';
@@ -447,8 +451,15 @@ tbody tr.new{animation:rowin .4s ease}
       const what = el('div', 'what');
       what.append(el('em', r.action, r.action.toUpperCase()), ` ${r.ip} → ${r.port}/${r.proto || 'tcp'}`);
       let meta;
-      if (r.action === 'deny') meta = r.enforced ? el('span', 'rmeta on', `enforced · ${(r.command || '').split(' ')[0]}`) : el('span', 'rmeta sim', 'simulated only · run as admin/root to enforce');
-      else meta = el('span', 'rmeta', r.enforced ? 'removed matching OS block' : 'simulation');
+      const tool = (r.command || '').split(' ')[0];
+      if (r.enforced) meta = el('span', 'rmeta on', `enforced · ${tool}`);
+      else meta = el('span', 'rmeta sim', 'simulated only · run as admin/root to enforce');
+      if (r.action === 'allow') meta.append(' · takes priority over deny rules');
+      const over = (r.overridden_by || []).map(id => state.rules.findIndex(x => x.id === id) + 1).filter(n => n > 0);
+      if (over.length){
+        const which = over.length === 1 ? `allow rule ${over[0]}` : `allow rules ${over.join(', ')}`;
+        meta.append(' · ', el('span', 'exp', r.fully_allowed ? `fully overridden by ${which}` : `${which} take${over.length === 1 ? 's' : ''} priority for part of it`));
+      }
       if (r.expires_at){ meta.append(' · '); meta.append(el('span', 'exp', `expires in ${timeLeft(r.expires_at)}`)); }
       what.append(meta);
       if (r.covers_self && r.covers_self.length) what.append(el('span', 'rmeta self', selfText(r.covers_self)));

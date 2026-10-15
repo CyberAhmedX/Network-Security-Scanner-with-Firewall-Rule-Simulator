@@ -1,0 +1,48 @@
+name: Tests
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  unit:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install -r requirements.txt pytest
+      - run: python -m pytest tests -v
+
+  # These change the real OS firewall, which is safe on GitHub's throwaway machines.
+  real-firewall-linux:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install -r requirements.txt pytest
+      - name: Test with real iptables (as root)
+        run: sudo env "PATH=$PATH" REAL_FIREWALL=1 python -m pytest tests/test_real_firewall.py -v -rs
+
+  real-firewall-windows:
+    runs-on: windows-latest  # runs as Administrator
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install -r requirements.txt pytest
+      - name: Test with real Windows Firewall rules
+        env:
+          REAL_FIREWALL: '1'
+        run: python -m pytest tests/test_real_firewall.py -v -rs

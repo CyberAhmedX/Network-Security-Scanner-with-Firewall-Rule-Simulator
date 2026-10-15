@@ -216,10 +216,23 @@ def broadcast_rules():
 
 
 # ---------- real firewall enforcement ----------
+#
+# Allow rules always take priority over deny rules, in the OS firewall and in
+# the simulation alike, so allowing one address inside a blocked range works.
+#
+# Linux (iptables): deny rules are appended as DROP rules and allow rules are
+# inserted at the top of INPUT as ACCEPT rules. iptables uses the first rule
+# that matches, so an ACCEPT always wins.
+#
+# Windows (netsh advfirewall): a block rule beats an allow rule no matter the
+# order, so an allow rule alone can't make a hole in a block. Each deny rule is
+# therefore written as its range with every overlapping allow rule cut out,
+# and rewritten whenever allow rules change. Allow rules are also added as real
+# allow rules, since Windows drops unsolicited inbound traffic by default.
 
 def _run(cmd):
     """Run a command without a shell. Returns True if it exited successfully."""
-    if cmd[0] == 'iptables' and os.geteuid() != 0:
+    if cmd[0] == 'iptables' and hasattr(os, 'geteuid') and os.geteuid() != 0:
         # -n: fail instead of waiting for a password prompt when not run as root
         cmd = ['sudo', '-n'] + cmd
     try:
@@ -229,41 +242,191 @@ def _run(cmd):
         return False
 
 
-def firewall_command(op, ip, low, high, proto):
-    """Argument list to add, delete or check the OS rule that drops this traffic.
+def port_text(low, high, sep='-'):
+    return str(low) if low == high else f'{low}{sep}{high}'
 
-    op is 'add', 'delete' or 'check'. ip/ports/proto must already be validated.
-    Returns None on systems without a supported firewall.
-    """
+
+def iptables_command(op, rule):
+    """Argument list to add, delete or check a rule's iptables entry. op: 'add', 'delete' or 'check'."""
+    target = 'ACCEPT' if rule['action'] == 'allow' else 'DROP'
+    if op == 'add':
+        # ACCEPT goes to the top so it wins over any DROP; DROP goes to the end
+        position = ['-I', 'INPUT', '1'] if target == 'ACCEPT' else ['-A', 'INPUT']
+    else:
+        position = ['-D' if op == 'delete' else '-C', 'INPUT']
+    return ['iptables'] + position + ['-p', rule['proto'], '--dport', port_text(rule['port_lo'], rule['port_hi'], ':'),
+                                      '-s', rule['ip'], '-j', target]
+
+
+def windows_rule_name(rule):
+    return f"NetScanner-{rule['action']}-{rule['id']}"
+
+
+def legacy_windows_name(rule):
+    """Name used for block rules before rule IDs were part of the name."""
+    return f"Block_{rule['ip'].replace('/', '_')}_{port_text(rule['port_lo'], rule['port_hi'])}_{rule['proto']}"
+
+
+# Address and port ranges as plain integer intervals, so a deny range can have
+# allowed parts cut out of it. A box is (ip version, first ip, last ip, first port, last port).
+
+def rule_box(rule):
+    net = ipaddress.ip_network(rule['ip'], strict=False)
+    return (net.version, int(net.network_address), int(net.broadcast_address), rule['port_lo'], rule['port_hi'])
+
+
+def subtract_box(box, cut):
+    """Parts of `box` not covered by `cut`, as a list of boxes (at most four)."""
+    ver, ip_lo, ip_hi, p_lo, p_hi = box
+    c_ver, c_ip_lo, c_ip_hi, c_p_lo, c_p_hi = cut
+    if ver != c_ver or c_ip_hi < ip_lo or c_ip_lo > ip_hi or c_p_hi < p_lo or c_p_lo > p_hi:
+        return [box]  # no overlap
+    parts = []
+    if ip_lo < c_ip_lo:
+        parts.append((ver, ip_lo, c_ip_lo - 1, p_lo, p_hi))
+    if c_ip_hi < ip_hi:
+        parts.append((ver, c_ip_hi + 1, ip_hi, p_lo, p_hi))
+    mid_lo, mid_hi = max(ip_lo, c_ip_lo), min(ip_hi, c_ip_hi)
+    if p_lo < c_p_lo:
+        parts.append((ver, mid_lo, mid_hi, p_lo, c_p_lo - 1))
+    if c_p_hi < p_hi:
+        parts.append((ver, mid_lo, mid_hi, c_p_hi + 1, p_hi))
+    return parts
+
+
+def overlaps(a, b):
+    """True if two rules share a protocol and at least one address and port."""
+    if a['proto'] != b['proto']:
+        return False
+    return subtract_box(rule_box(a), rule_box(b)) != [rule_box(a)]
+
+
+def blocked_boxes(deny, allows):
+    """What a deny rule still blocks once every overlapping allow rule is cut out."""
+    boxes = [rule_box(deny)]
+    for allow in allows:
+        if allow['proto'] != deny['proto']:
+            continue
+        cut = rule_box(allow)
+        boxes = [part for box in boxes for part in subtract_box(box, cut)]
+    return boxes
+
+
+def address_text(ver, low, high):
+    """One address, a CIDR range if it is exactly one, otherwise first-last."""
+    cls = ipaddress.IPv4Address if ver == 4 else ipaddress.IPv6Address
+    first, last = cls(low), cls(high)
+    if low == high:
+        return str(first)
+    nets = list(ipaddress.summarize_address_range(first, last))
+    return str(nets[0]) if len(nets) == 1 else f'{first}-{last}'
+
+
+def windows_block_specs(deny, allows):
+    """(remoteip, localport) pairs for the netsh block rules of one deny rule.
+
+    Parts with the same address range are joined into one port list, then parts
+    with the same port list into one address list, so few netsh rules are needed."""
+    by_address = {}
+    for ver, ip_lo, ip_hi, p_lo, p_hi in sorted(blocked_boxes(deny, allows)):
+        by_address.setdefault((ver, ip_lo, ip_hi), []).append((p_lo, p_hi))
+    by_ports = {}
+    for address, ports in by_address.items():
+        by_ports.setdefault(tuple(sorted(ports)), []).append(address)
+    return [(','.join(address_text(*a) for a in addresses), ','.join(port_text(lo, hi) for lo, hi in ports))
+            for ports, addresses in by_ports.items()]
+
+
+def netsh_add(rule, remoteip, localport):
+    action = 'allow' if rule['action'] == 'allow' else 'block'
+    return ['netsh', 'advfirewall', 'firewall', 'add', 'rule', f'name={windows_rule_name(rule)}', 'dir=in',
+            f'action={action}', f"protocol={rule['proto'].upper()}", f'remoteip={remoteip}', f'localport={localport}']
+
+
+def netsh_delete(rule):
+    return ['netsh', 'advfirewall', 'firewall', 'delete', 'rule', f'name={windows_rule_name(rule)}']
+
+
+def netsh_show(rule):
+    return ['netsh', 'advfirewall', 'firewall', 'show', 'rule', f'name={windows_rule_name(rule)}']
+
+
+def active_allows():
+    return [r for r in firewall_rules if r['action'] == 'allow']
+
+
+def os_add_commands(rule):
+    """Commands that put one rule into the OS firewall. Empty on unsupported systems."""
     system = platform.system()
-    if system == 'Windows':
-        ports = str(low) if low == high else f'{low}-{high}'
-        name = f"name=Block_{ip.replace('/', '_')}_{ports}_{proto}"
-        if op == 'add':
-            return ['netsh', 'advfirewall', 'firewall', 'add', 'rule', name, 'dir=in', 'action=block',
-                    f'protocol={proto.upper()}', f'remoteip={ip}', f'localport={ports}']
-        if op == 'delete':
-            return ['netsh', 'advfirewall', 'firewall', 'delete', 'rule', name]
-        return ['netsh', 'advfirewall', 'firewall', 'show', 'rule', name]
     if system == 'Linux':
-        flag = {'add': '-A', 'delete': '-D', 'check': '-C'}[op]
-        ports = str(low) if low == high else f'{low}:{high}'
-        return ['iptables', flag, 'INPUT', '-p', proto, '--dport', ports, '-s', ip, '-j', 'DROP']
-    return None
+        return [iptables_command('add', rule)]
+    if system == 'Windows':
+        if rule['action'] == 'allow':
+            return [netsh_add(rule, rule['ip'], port_text(rule['port_lo'], rule['port_hi']))]
+        return [netsh_add(rule, ip, ports) for ip, ports in windows_block_specs(rule, active_allows())]
+    return []
 
 
-def apply_os_rule(op, rule):
-    """Run add/delete/check for a rule. Returns (succeeded, command text)."""
-    cmd = firewall_command(op, rule['ip'], rule['port_lo'], rule['port_hi'], rule['proto'])
-    if cmd is None:
-        return False, ''
-    return _run(cmd), ' '.join(cmd)
+def enforce(rule):
+    """Add a rule to the OS firewall. Sets rule['enforced'] and rule['last_command']."""
+    system = platform.system()
+    if system not in ('Linux', 'Windows'):
+        rule['enforced'], rule['last_command'] = False, ''
+        return False
+    commands = os_add_commands(rule)
+    if system == 'Windows':
+        _run(netsh_delete(rule))  # replace any earlier version of this rule's parts
+    ok = all([_run(cmd) for cmd in commands])
+    rule['enforced'] = ok
+    rule['last_command'] = ' ; '.join(' '.join(cmd) for cmd in commands) if commands else \
+        ' '.join(netsh_delete(rule)) + '  (fully covered by allow rules, nothing left to block)'
+    return ok
 
 
-def add_real_firewall_rule(ip, port, action, proto='tcp'):
-    """Apply (deny) or remove (allow) a real OS firewall rule. Returns True if the OS firewall changed."""
-    rule = {'ip': ip, 'port_lo': port, 'port_hi': port, 'proto': proto}
-    return apply_os_rule('add' if action == 'deny' else 'delete', rule)[0]
+def unenforce(rule):
+    """Remove a rule from the OS firewall. Sets rule['last_command']."""
+    system = platform.system()
+    if system == 'Linux':
+        cmd = iptables_command('delete', rule)
+    elif system == 'Windows':
+        cmd = netsh_delete(rule)
+    else:
+        rule['last_command'] = ''
+        return False
+    ok = _run(cmd)
+    rule['last_command'] = ' '.join(cmd)
+    return ok
+
+
+def is_present(rule):
+    system = platform.system()
+    if system == 'Linux':
+        return _run(iptables_command('check', rule))
+    if system == 'Windows':
+        if rule['action'] == 'deny' and not os_add_commands(rule):
+            return True  # nothing to block: being absent is correct
+        return _run(netsh_show(rule))
+    return False
+
+
+def refresh_windows_blocks(changed_allow):
+    """On Windows, rewrite the deny rules an allow rule overlaps, so the allowed part is cut out or put back."""
+    if platform.system() != 'Windows':
+        return
+    for rule in firewall_rules:
+        if rule['action'] == 'deny' and rule.get('enforced') and overlaps(rule, changed_allow):
+            enforce(rule)
+
+
+def annotate_rules():
+    """Note on each deny rule which allow rules take priority over part of it, for the rule list."""
+    allows = active_allows()
+    for rule in firewall_rules:
+        if rule['action'] != 'deny':
+            continue
+        over = [a['id'] for a in allows if overlaps(rule, a)]
+        rule['overridden_by'] = over
+        rule['fully_allowed'] = bool(over) and not blocked_boxes(rule, allows)
 
 
 def rule_covers(rule, ip, port, proto):
@@ -276,13 +439,22 @@ def rule_covers(rule, ip, port, proto):
         return False
 
 
+def is_blocked(rules, ip, port, proto):
+    """Blocked when a deny rule matches and no allow rule does: allow always wins."""
+    matching = [r for r in rules if rule_covers(r, ip, port, proto)]
+    return any(r['action'] == 'deny' for r in matching) and not any(r['action'] == 'allow' for r in matching)
+
+
 def remove_rule(rule, event, note=''):
     """Take a rule out of the list and the OS firewall, then log it. Caller holds the lock."""
     firewall_rules.remove(rule)
-    if rule['action'] == 'deny' and rule['enforced']:
-        _, rule['last_command'] = apply_os_rule('delete', rule)
+    if rule.get('enforced'):
+        unenforce(rule)
+        if rule['action'] == 'allow':
+            refresh_windows_blocks(rule)  # the block comes back where this rule had cut it out
     else:
         rule['last_command'] = ''
+    annotate_rules()
     save_rules()
     audit(event, rule, 'warn' if event == 'expired' else 'ok', note)
 
@@ -310,28 +482,46 @@ def restore_rules():
     """Load saved rules at startup and bring the OS firewall back in line with them."""
     now = time.time()
     privileged = is_privileged()
+    saved = []
     for rule in load_json(RULES_FILE, []):
         rule.setdefault('proto', 'tcp')
-        rule['covers_self'] = covered_local_addresses(rule)
+        rule.setdefault('id', uuid.uuid4().hex[:8])
+        try:
+            rule_box(rule)
+        except (KeyError, TypeError, ValueError):
+            print(f"Skipping a damaged saved rule: {rule}")
+            continue
         if rule.get('expires_at') and rule['expires_at'] <= now:
-            if rule['action'] == 'deny' and rule.get('enforced'):
-                _, rule['last_command'] = apply_os_rule('delete', rule)
+            if rule.get('enforced'):
+                unenforce(rule)
             audit('expired', rule, 'warn', 'expired while the app was stopped')
             continue
-        if rule['action'] == 'deny' and privileged:
-            present, _ = apply_os_rule('check', rule)
-            if present:
-                rule['enforced'] = True
+        saved.append(rule)
+
+    # Allow rules first, so the Windows block rules are written with them cut out
+    for rule in sorted(saved, key=lambda r: r['action'] != 'allow'):
+        rule['covers_self'] = covered_local_addresses(rule)
+        firewall_rules.append(rule)
+        was_enforced = rule.get('enforced')
+        if privileged:
+            # Windows block rules are always rewritten, so they match the current allow rules
+            windows_deny = platform.system() == 'Windows' and rule['action'] == 'deny'
+            if windows_deny:
+                _run(['netsh', 'advfirewall', 'firewall', 'delete', 'rule', f'name={legacy_windows_name(rule)}'])
+            if windows_deny or not is_present(rule):
+                # Linux drops iptables rules on reboot: put the saved rule back
+                enforce(rule)
+                if not (windows_deny and was_enforced and rule['enforced']):
+                    note = 'was missing from the OS firewall' if was_enforced else 'now applied with admin/root rights'
+                    audit('restored', rule, 'ok' if rule['enforced'] else 'err', note)
             else:
-                # Linux drops iptables rules on reboot: put the saved block back
-                note = 'was missing from the OS firewall' if rule.get('enforced') else 'now applied with admin/root rights'
-                rule['enforced'], rule['last_command'] = apply_os_rule('add', rule)
-                audit('restored', rule, 'ok' if rule['enforced'] else 'err', note)
-        elif rule['action'] == 'deny' and rule.get('enforced'):
+                rule['enforced'] = True
+        elif was_enforced:
             rule['enforced'] = False
             rule['last_command'] = ''
             audit('restored', rule, 'warn', 'running without admin/root, so the OS rule could not be checked')
-        firewall_rules.append(rule)
+    firewall_rules.sort(key=lambda r: r.get('created_at', 0))
+    annotate_rules()
     for entry in load_json_lines(AUDIT_FILE)[-recent_audit.maxlen:]:
         recent_audit.append(entry)
     save_rules()
@@ -520,17 +710,21 @@ def handle_firewall_rule(data):
             'created_at': time.time(), 'expires_at': time.time() + seconds if seconds else None}
     rule['covers_self'] = covered_local_addresses(rule)
 
-    # Deny rules are enforced at the OS level when the app has admin/root rights.
-    # Without them the rule still works in the simulation, and the UI says so.
-    # An allow rule removes a matching OS block if one exists.
+    # With admin/root rights the rule goes into the OS firewall too. Without them it
+    # still works in the simulation, and the page says so.
     with lock:
-        rule['enforced'], cmd = apply_os_rule('add' if rule_action == 'deny' else 'delete', rule)
-        rule['command'] = cmd
-        rule['last_command'] = cmd if rule['enforced'] else ''
         firewall_rules.append(rule)
+        enforce(rule)
+        rule['command'] = rule['last_command']
+        if rule['enforced'] and rule_action == 'allow':
+            refresh_windows_blocks(rule)  # cut this range out of overlapping Windows block rules
+        if not rule['enforced']:
+            rule['last_command'] = ''
+        annotate_rules()
         save_rules()
-    audit('added', rule, 'ok' if rule['enforced'] or rule_action == 'allow' else 'warn',
-          '' if rule['enforced'] or rule_action == 'allow' else 'no admin/root rights')
+    supported = platform.system() in ('Linux', 'Windows')
+    audit('added', rule, 'ok' if rule['enforced'] else 'warn',
+          '' if rule['enforced'] else ('no admin/root rights' if supported else 'no supported OS firewall'))
 
     # Emit the rule to the frontend for visualization
     emit('firewall_rule_added', rule)
@@ -562,18 +756,13 @@ def handle_remove_firewall_rule(data):
 
 # Simulate traffic flow based on firewall rules
 def simulate_traffic(scan_results):
-    """Mark ports covered by a deny rule as Blocked; others keep their Nmap state."""
+    """Mark ports a deny rule blocks as Blocked; others keep their Nmap state. Allow rules win over deny rules."""
     with lock:
         rules = list(firewall_rules)
     for result in scan_results:
-        result['blocked'] = False
-        for rule in rules:
-            # First matching rule wins, like most firewalls
-            if rule_covers(rule, result['ip'], result['port'], result.get('proto', 'tcp')):
-                if rule['action'] == 'deny':
-                    result['status'] = 'Blocked'
-                    result['blocked'] = True
-                break
+        result['blocked'] = is_blocked(rules, result['ip'], result['port'], result.get('proto', 'tcp'))
+        if result['blocked']:
+            result['status'] = 'Blocked'
 
 
 # Start the server
