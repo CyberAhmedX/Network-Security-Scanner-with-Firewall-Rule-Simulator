@@ -13,7 +13,7 @@ This project provides an educational, hands-on sandbox for exploring network-lev
 
 I built this to go beyond just using scanning tools like Nmap and firewall interfaces like pfSense, and actually understand the mechanics behind them: how a scan differentiates open, closed, and filtered ports, and how firewall rule ordering and matching decide what traffic is allowed through.
 
-**This isn't just a visual simulation.** When run with elevated privileges, adding a "deny" rule executes a real system-level firewall command, `netsh advfirewall` on Windows or `iptables` on Linux, actually blocking the specified IP and port at the OS level, not just in the UI. Removing the rule reverses it the same way.
+**This isn't just a visual simulation.** When run with elevated privileges, adding a "deny" rule executes a real system-level firewall command, `netsh advfirewall` on Windows or `iptables` on Linux, actually blocking the specified IP and port at the OS level, not just in the UI. Removing the rule reverses it the same way. Allow rules are real too: they let traffic through even inside a blocked range, so you can block a whole subnet and still allow one machine.
 
 ---
 
@@ -47,19 +47,23 @@ pip install -r requirements.txt
 
 **Simulated + Real Firewall Enforcement**
 - Add allow or deny rules by source IP or CIDR range, single port or port range, TCP or UDP
-- When run with admin/root privileges, deny rules are applied as real `netsh` (Windows) or `iptables` (Linux) rules, actually blocking traffic at the OS level
+- When run with admin/root privileges, both rule types are real `iptables` (Linux) or `netsh` (Windows) rules: deny rules block traffic at the OS level and allow rules let it through
+- **Allow wins over deny:** allow one address or port inside a blocked range and only that gets through, whatever order the rules were added in. Removing the allow rule puts the full block back
+  - On Linux, an allow rule is an `ACCEPT` at the top of the `INPUT` chain, so iptables reaches it before any `DROP`
+  - On Windows, a block rule always wins over an allow rule, so the app rewrites the block with the allowed part cut out. Blocking `10.0.0.0/24` while allowing `10.0.0.50` becomes a block on `10.0.0.0-10.0.0.49` and `10.0.0.51-10.0.0.255`, plus a real allow rule for `10.0.0.50`
+- The rule list shows which allow rules take priority over part of a deny rule
 - Without admin/root privileges, rules still work in the simulation and are labeled "simulated only"
 - Remove rules dynamically, real and simulated
 - **Auto-expiry:** rules can expire after 15 minutes, 1 hour or 24 hours, and are removed from the OS firewall on time
 - **Block log:** every rule added, removed, expired or restored is written to `state/block_log.jsonl`, an audit trail that survives restarts
 - **Persistence:** rules are saved to `state/firewall_rules.json` and restored on startup. If an OS rule went missing (for example, Linux clears iptables on reboot), it is re-applied; rules that expired while the app was off are removed
-- Visualize rule impact on live scan results: ports keep their real Nmap state (open, closed, filtered) unless a deny rule marks them Blocked
+- Visualize rule impact on live scan results: ports keep their real Nmap state (open, closed, filtered) unless a deny rule that no allow rule overrides marks them Blocked
 
 **Operator Console UI**
 - WebSocket-driven updates, no manual refresh needed
 - Header shows the connection, the OS and whether the app is running with admin/root rights
 - Color-coded port states with open / filtered / closed / blocked counts
-- One-click **Block** and **Unblock** on each scanned port
+- One-click **Block** on open ports, **Unblock** on a port with its own rule, and **Allow** on a port blocked by a wider range rule
 - Preview of the exact `iptables` or `netsh` command before a rule is added
 - Timestamped activity log of scans, rules and errors
 - Rules and the block log are restored after a page reload, and the layout adapts to narrow browser windows
@@ -112,6 +116,21 @@ Rescanning after the block, port 8080 no longer shows as open, because the OS fi
 
 ---
 
+## Tests
+
+```
+pip install pytest
+python -m pytest tests
+```
+
+- The rule logic is tested for both Linux and Windows against a stand-in firewall that behaves like iptables (first match wins) and like Windows Firewall (a block beats an allow)
+- `tests/test_real_firewall.py` changes the real OS firewall, so it only runs with `REAL_FIREWALL=1` as root or Administrator:
+  - **Linux:** a real connection is dropped by a deny rule, let through by an allow rule, and dropped again once the allow rule is removed
+  - **Windows:** the Windows Firewall rules are read back with `netsh`, checking that the allowed address and port were cut out of the block
+- GitHub Actions runs all of them on Linux and Windows on every push
+
+---
+
 ## Security
 
 The first version built firewall commands from user input and ran them with `shell=True`, a command injection risk. I found it in a self-review and fixed it:
@@ -130,6 +149,8 @@ The first version built firewall commands from user input and ran them with `she
 - A scan can only be stopped between batches, so a single host scan runs until Nmap finishes.
 - Blocking an address range that includes your own machine also hides those ports from your own scans, since the OS firewall drops the scanner's probes too. The app warns you before you add such a rule and keeps the warning on the rule.
 - Rules created with a different OS user or outside the app are not tracked. The app only manages rules it created.
+- On Windows, allowed traffic is cut out of the block rules this app created. Block rules made outside the app still win over its allow rules.
+- Windows Firewall doesn't filter traffic a computer sends to itself, so on Windows, rules only affect traffic from other machines.
 
 ---
 
