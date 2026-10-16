@@ -59,16 +59,24 @@ jobs:
       - run: pip install -r requirements.txt pytest
       - name: Write a sample session with the app's own code
         run: SIEM_SAMPLE_OUT="$RUNNER_TEMP/session.ndjson" python -m pytest tests/test_siem.py -k sample -v
-      - name: Start a Wazuh manager with the NetScan rules
+      - name: Start a Wazuh manager and load the NetScan rules
         run: |
-          docker run -d --name wazuh \
-            -v "$PWD/siem/wazuh/netscan_rules.xml:/var/ossec/etc/rules/netscan_rules.xml:ro" \
-            wazuh/wazuh-manager:4.9.2
-          for i in $(seq 1 60); do
-            docker exec wazuh /var/ossec/bin/wazuh-control status 2>/dev/null | grep -q "wazuh-analysisd is running" && break
-            sleep 5
-          done
-          docker exec wazuh /var/ossec/bin/wazuh-control status
+          wait_for_analysisd() {
+            for i in $(seq 1 60); do
+              docker exec wazuh /var/ossec/bin/wazuh-control status 2>/dev/null | grep -q "wazuh-analysisd is running" && return 0
+              sleep 5
+            done
+            docker exec wazuh /var/ossec/bin/wazuh-control status; return 1
+          }
+          # start with the image's own config first: mounting into /var/ossec/etc stops it being created
+          docker run -d --name wazuh wazuh/wazuh-manager:4.9.2
+          wait_for_analysisd
+          docker cp siem/wazuh/netscan_rules.xml wazuh:/var/ossec/etc/rules/netscan_rules.xml
+          docker exec wazuh chown root:wazuh /var/ossec/etc/rules/netscan_rules.xml
+          docker exec wazuh chmod 660 /var/ossec/etc/rules/netscan_rules.xml
+          docker exec wazuh /var/ossec/bin/wazuh-analysisd -t
+          docker exec wazuh /var/ossec/bin/wazuh-control restart
+          wait_for_analysisd
       - name: Check the sample session (includes the correlation rule)
         run: python siem/wazuh/check_rules.py wazuh "$RUNNER_TEMP/session.ndjson" --expect-correlation
       - name: Check the events from a real scan on Linux
