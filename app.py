@@ -9,6 +9,7 @@ import threading
 import time
 import uuid
 from collections import deque
+from datetime import datetime, timezone
 from pathlib import Path
 
 import nmap
@@ -24,6 +25,10 @@ STATE_DIR = Path(__file__).resolve().parent / 'state'
 RULES_FILE = STATE_DIR / 'firewall_rules.json'
 AUDIT_FILE = STATE_DIR / 'block_log.jsonl'
 HISTORY_FILE = STATE_DIR / 'scan_history.json'
+# Events for a SIEM (Wazuh, Elastic, Splunk...), one JSON object per line in Elastic Common Schema.
+# NETSCAN_SIEM_LOG=/path/file.ndjson writes them elsewhere, NETSCAN_SIEM_LOG=off turns them off.
+SIEM_FILE = STATE_DIR / 'siem' / 'netscan-events.ndjson'
+ECS_VERSION = '8.11.0'
 
 # Nmap arguments per scan type; anything else falls back to a full TCP connect scan
 SCAN_ARGS = {
@@ -206,6 +211,7 @@ def audit(event, rule, level='ok', note=''):
                 f.write(json.dumps(entry) + '\n')
         except OSError as e:
             print(f"Could not write block log: {e}")
+    siem_rule_event(event, rule, level, note)
     socketio.emit('audit', entry)
 
 
@@ -213,6 +219,136 @@ def broadcast_rules():
     with lock:
         rules = list(firewall_rules)
     socketio.emit('rules_update', rules)
+
+
+# ---------- SIEM events ----------
+#
+# Every scan, port result, new open port and firewall rule change is written as one
+# Elastic Common Schema (ECS) event per line. Wazuh, Filebeat/Elastic Agent and Splunk
+# can all read the file as it grows; the siem/ folder has ready-made configs and rules.
+
+def iso_time(t):
+    return datetime.fromtimestamp(t, timezone.utc).isoformat(timespec='milliseconds').replace('+00:00', 'Z')
+
+
+def siem_path():
+    setting = os.environ.get('NETSCAN_SIEM_LOG', '').strip()
+    if setting.lower() in ('off', 'false', '0', 'no'):
+        return None
+    return Path(setting) if setting else SIEM_FILE
+
+
+def observer():
+    return {'hostname': socket.gethostname(), 'type': 'scanner', 'vendor': 'CyberAhmedX',
+            'product': 'Network Security Scanner', 'os': {'family': platform.system().lower()}}
+
+
+def siem_event(action, kind, category, types, message, outcome=None, severity=None,
+               dataset='netscan.scan', **fields):
+    """Append one ECS event to the SIEM log. Extra keyword arguments become top-level ECS fields."""
+    path = siem_path()
+    if path is None:
+        return None
+    now = time.time()
+    event = {'@timestamp': iso_time(now), 'ecs': {'version': ECS_VERSION},
+             'event': {'module': 'netscan', 'dataset': dataset, 'kind': kind, 'category': category,
+                       'type': types, 'action': action, 'created': iso_time(now)},
+             'message': message, 'observer': observer()}
+    if outcome:
+        event['event']['outcome'] = outcome
+    if severity is not None:
+        event['event']['severity'] = severity
+    for key, value in fields.items():
+        if isinstance(value, dict) and isinstance(event.get(key), dict):
+            event[key].update(value)
+        else:
+            event[key] = value
+    with lock:
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            with path.open('a', encoding='utf-8') as f:
+                f.write(json.dumps(event, ensure_ascii=False) + '\n')
+        except OSError as e:
+            print(f"Could not write SIEM event: {e}")
+    return event
+
+
+def ip_fields(value):
+    """ECS keeps single addresses in .ip and anything else (ranges, hostnames) in .address."""
+    try:
+        return {'ip': str(ipaddress.ip_address(value)), 'address': str(value)}
+    except ValueError:
+        return {'address': str(value)}
+
+
+RULE_EVENT_TYPES = {'added': 'creation', 'removed': 'deletion', 'expired': 'deletion', 'restored': 'change'}
+
+
+def siem_rule_event(event, rule, level, note):
+    enforced = bool(rule.get('enforced'))
+    supported = platform.system() in ('Linux', 'Windows')
+    if enforced:
+        mode, outcome = 'enforced', 'success'
+    elif level == 'err' or (event == 'added' and supported and is_privileged()):
+        mode, outcome = 'failed', 'failure'  # had the rights, but the OS firewall command failed
+    else:
+        mode, outcome = 'simulated', 'unknown'
+    severity = {'added': 5 if rule['action'] == 'allow' else 3, 'removed': 3, 'expired': 2, 'restored': 2}.get(event, 3)
+    if outcome == 'failure':
+        severity = 6
+    ruleset = {'Linux': 'iptables', 'Windows': 'windows-firewall'}.get(platform.system(), 'none') if enforced else 'simulation'
+    destination = {'port': rule['port_lo']} if rule.get('port_lo') == rule.get('port_hi') and rule.get('port_lo') else {}
+    siem_event(
+        f'firewall-rule-{event}', 'event', ['configuration', 'network'], [RULE_EVENT_TYPES.get(event, 'change')],
+        f"Firewall rule {event}: {rule_label(rule)}" + (f" ({note})" if note else ''),
+        outcome=outcome, severity=severity, dataset='netscan.firewall',
+        rule={'id': rule.get('id'), 'name': rule_label(rule), 'ruleset': ruleset},
+        source=ip_fields(rule['ip']), destination=destination, network={'transport': rule['proto']},
+        netscan={'rule': {'action': rule['action'], 'source': rule['ip'], 'ports': str(rule['port']),
+                          'mode': mode, 'command': rule.get('last_command', ''),
+                          'expires_at': iso_time(rule['expires_at']) if rule.get('expires_at') else None,
+                          'covers_self': rule.get('covers_self', []), 'note': note}})
+
+
+def split_port_key(key):
+    """'10.0.0.5:22/tcp' -> ('10.0.0.5', 22, 'tcp'). rsplit keeps IPv6 addresses whole."""
+    address, rest = key.rsplit(':', 1)
+    port, proto = rest.split('/', 1)
+    return address, int(port), proto
+
+
+def siem_scan_events(scan_id, target, arguments, rows, diff, started, cancelled):
+    scan = {'id': scan_id, 'target': target, 'arguments': arguments}
+    for row in rows:
+        siem_event('port-state', 'event', ['network'], ['info'],
+                   f"{row['ip']}:{row['port']}/{row['proto']} is {row['state']}" + (' (blocked by a rule)' if row.get('blocked') else ''),
+                   destination=ip_fields(row['ip']) | {'port': row['port']}, network={'transport': row['proto']},
+                   service={'name': row.get('service') or None, 'version': row.get('version') or None},
+                   netscan={'scan': scan, 'port': {'state': row['state'], 'blocked_by_rule': bool(row.get('blocked'))}})
+    counts = {state: sum(1 for r in rows if r['state'] == state) for state in ('open', 'filtered', 'closed')}
+    counts['blocked_by_rule'] = sum(1 for r in rows if r.get('blocked'))
+    ended = time.time()
+    siem_event('scan-stopped' if cancelled else 'scan-completed', 'event', ['network'], ['end'],
+               f"Nmap {arguments} scan of {target} {'stopped' if cancelled else 'completed'}: "
+               f"{counts['open']} open, {len(rows)} reported",
+               outcome='unknown' if cancelled else 'success', severity=1,
+               netscan={'scan': scan | counts | {'reported': len(rows)}},
+               **{'event': {'start': iso_time(started), 'end': iso_time(ended), 'duration': int((ended - started) * 1e9)}})
+    if not diff:
+        return
+    previous = iso_time(diff['previous_time']) if diff.get('previous_time') else None
+    for key in diff.get('new_open', []):
+        ip, port, proto = split_port_key(key)
+        siem_event('new-open-port', 'alert', ['network'], ['info'],
+                   f"New open port since the last scan: {key}", severity=7,
+                   destination=ip_fields(ip) | {'port': port}, network={'transport': proto},
+                   netscan={'scan': scan | {'previous_scan': previous}})
+    for key in diff.get('no_longer_open', []):
+        ip, port, proto = split_port_key(key)
+        siem_event('port-no-longer-open', 'event', ['network'], ['info'],
+                   f"Port no longer open since the last scan: {key}", severity=3,
+                   destination=ip_fields(ip) | {'port': port}, network={'transport': proto},
+                   netscan={'scan': scan | {'previous_scan': previous}})
 
 
 # ---------- real firewall enforcement ----------
@@ -616,6 +752,10 @@ def compare_with_last_scan(target, arguments, rows):
 def run_scan(sid, target, arguments, chunks):
     found = []
     cancelled = False
+    scan_id = uuid.uuid4().hex[:12]
+    started = time.time()
+    siem_event('scan-started', 'event', ['network'], ['start'], f"Nmap {arguments} scan of {target} started",
+               netscan={'scan': {'id': scan_id, 'target': target, 'arguments': arguments}})
     try:
         socketio.emit('scan_progress', {'done': 0, 'total': len(chunks)}, to=sid)
         for i, hosts in enumerate(chunks):
@@ -629,6 +769,9 @@ def run_scan(sid, target, arguments, chunks):
             except nmap.PortScannerError as e:
                 # e.g. Nmap not installed, or SYN/UDP scans without admin/root privileges
                 socketio.emit('scan_error', {'message': f'Scan failed: {e}'}, to=sid)
+                siem_event('scan-failed', 'event', ['network'], ['end'], f"Nmap {arguments} scan of {target} failed",
+                           outcome='failure', severity=4, error={'message': str(e)},
+                           netscan={'scan': {'id': scan_id, 'target': target, 'arguments': arguments}})
                 return
             rows = scan_rows(nm)
             simulate_traffic(rows)
@@ -641,6 +784,7 @@ def run_scan(sid, target, arguments, chunks):
             socketio.emit('scan_update', {'ip': target, 'port': 'N/A', 'service': 'N/A',
                                           'status': 'No open ports found'}, to=sid)
         diff = None if cancelled else compare_with_last_scan(target, arguments, found)
+        siem_scan_events(scan_id, target, arguments, found, diff, started, cancelled)
         socketio.emit('scan_complete', {'target': target, 'arguments': arguments, 'count': len(found),
                                         'cancelled': cancelled, 'diff': diff}, to=sid)
     finally:

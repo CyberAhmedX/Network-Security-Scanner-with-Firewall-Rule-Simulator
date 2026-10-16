@@ -1,0 +1,99 @@
+<!--
+  Wazuh rules for Network Security Scanner events (siem/README.md explains the setup).
+  The scanner writes Elastic Common Schema JSON, which Wazuh's built-in JSON decoder reads,
+  so these rules match on ECS fields such as event.action and event.outcome.
+  IDs 100500-100599 are in Wazuh's range for custom rules.
+-->
+<group name="netscan,">
+
+  <!-- Every scanner event. Level 0: kept in the archive, not alerted on its own. -->
+  <rule id="100500" level="0">
+    <decoded_as>json</decoded_as>
+    <field name="event.module">^netscan$</field>
+    <description>NetScan: $(event.action)</description>
+  </rule>
+
+  <!-- Scans -->
+  <rule id="100501" level="3">
+    <if_sid>100500</if_sid>
+    <field name="event.action">^scan-completed$</field>
+    <description>NetScan: scan of $(netscan.scan.target) completed, $(netscan.scan.open) open ports</description>
+    <group>netscan_scan,</group>
+  </rule>
+
+  <rule id="100502" level="5">
+    <if_sid>100500</if_sid>
+    <field name="event.action">^scan-failed$</field>
+    <description>NetScan: scan of $(netscan.scan.target) failed: $(error.message)</description>
+    <group>netscan_scan,</group>
+  </rule>
+
+  <!-- Attack surface changes -->
+  <rule id="100503" level="10">
+    <if_sid>100500</if_sid>
+    <field name="event.action">^new-open-port$</field>
+    <description>NetScan: new open port $(destination.ip):$(destination.port)/$(network.transport) since the last scan</description>
+    <group>netscan_exposure,</group>
+  </rule>
+
+  <rule id="100504" level="5">
+    <if_sid>100500</if_sid>
+    <field name="event.action">^port-no-longer-open$</field>
+    <description>NetScan: port $(destination.ip):$(destination.port)/$(network.transport) no longer open since the last scan</description>
+    <group>netscan_exposure,</group>
+  </rule>
+
+  <rule id="100505" level="12" frequency="5" timeframe="600">
+    <if_matched_sid>100503</if_matched_sid>
+    <same_field>destination.ip</same_field>
+    <description>NetScan: 5 or more new open ports on $(destination.ip) within 10 minutes</description>
+    <group>netscan_exposure,</group>
+  </rule>
+
+  <!-- Firewall rules -->
+  <rule id="100506" level="10">
+    <if_sid>100500</if_sid>
+    <field name="event.dataset">^netscan.firewall$</field>
+    <field name="event.outcome">^failure$</field>
+    <description>NetScan: firewall rule $(rule.name) could not be applied to the OS firewall</description>
+    <group>netscan_firewall,</group>
+  </rule>
+
+  <rule id="100507" level="5">
+    <if_sid>100500</if_sid>
+    <field name="event.action">^firewall-rule-added$</field>
+    <field name="netscan.rule.action">^deny$</field>
+    <description>NetScan: deny rule added: $(rule.name) ($(netscan.rule.mode))</description>
+    <group>netscan_firewall,</group>
+  </rule>
+
+  <rule id="100508" level="7">
+    <if_sid>100500</if_sid>
+    <field name="event.action">^firewall-rule-added$</field>
+    <field name="netscan.rule.action">^allow$</field>
+    <description>NetScan: allow rule added, traffic opened: $(rule.name) ($(netscan.rule.mode))</description>
+    <group>netscan_firewall,</group>
+  </rule>
+
+  <rule id="100509" level="5">
+    <if_sid>100500</if_sid>
+    <field name="event.action">^firewall-rule-removed$</field>
+    <description>NetScan: firewall rule removed: $(rule.name)</description>
+    <group>netscan_firewall,</group>
+  </rule>
+
+  <rule id="100510" level="3">
+    <if_sid>100500</if_sid>
+    <field name="event.action">^firewall-rule-expired$</field>
+    <description>NetScan: firewall rule expired: $(rule.name)</description>
+    <group>netscan_firewall,</group>
+  </rule>
+
+  <rule id="100511" level="3">
+    <if_sid>100500</if_sid>
+    <field name="event.action">^firewall-rule-restored$</field>
+    <description>NetScan: firewall rule restored after a restart: $(rule.name)</description>
+    <group>netscan_firewall,</group>
+  </rule>
+
+</group>

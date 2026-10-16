@@ -17,6 +17,8 @@ def state(tmp_path, monkeypatch):
     monkeypatch.setattr(scanner, 'RULES_FILE', tmp_path / 'firewall_rules.json')
     monkeypatch.setattr(scanner, 'AUDIT_FILE', tmp_path / 'block_log.jsonl')
     monkeypatch.setattr(scanner, 'HISTORY_FILE', tmp_path / 'scan_history.json')
+    monkeypatch.setattr(scanner, 'SIEM_FILE', tmp_path / 'siem' / 'netscan-events.ndjson')
+    monkeypatch.delenv('NETSCAN_SIEM_LOG', raising=False)
     scanner.firewall_rules.clear()
     scanner.recent_audit.clear()
     yield tmp_path

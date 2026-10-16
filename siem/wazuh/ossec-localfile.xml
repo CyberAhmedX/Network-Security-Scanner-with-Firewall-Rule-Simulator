@@ -1,0 +1,9 @@
+<!--
+  Add this inside <ossec_config> in the Wazuh agent's ossec.conf on the machine that runs the scanner
+  (Linux: /var/ossec/etc/ossec.conf, Windows: C:\Program Files (x86)\ossec-agent\ossec.conf),
+  then restart the agent. Change the location to where the scanner is installed.
+-->
+<localfile>
+  <log_format>json</log_format>
+  <location>/opt/Network-Security-Scanner-with-Firewall-Rule-Simulator/state/siem/netscan-events.ndjson</location>
+</localfile>

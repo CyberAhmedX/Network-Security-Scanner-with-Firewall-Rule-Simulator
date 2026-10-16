@@ -63,6 +63,12 @@ pip install -r requirements.txt
 - **Persistence:** rules are saved to `state/firewall_rules.json` and restored on startup. If an OS rule went missing (for example, Linux clears iptables on reboot), it is re-applied; rules that expired while the app was off are removed
 - Visualize rule impact on live scan results: ports keep their real Nmap state (open, closed, filtered) unless a deny rule that no allow rule overrides marks them Blocked
 
+**SIEM-Ready Events**
+- Every scan, port result, **new open port** and firewall rule change is written to `state/siem/netscan-events.ndjson` in **Elastic Common Schema (ECS)**, one JSON event per line
+- A port that opens since the last scan is written as an **alert**, and each rule event records whether the OS firewall really applied it (`enforced`, `simulated` or `failed`) along with the exact command
+- Ready-made setups in [`siem/`](siem/README.md): **Wazuh** agent config and detection rules (including a correlation rule for 5+ new open ports on one host in 10 minutes), a **Filebeat** input for Elastic, and Splunk and KQL searches
+- The Wazuh rules are tested against a real Wazuh manager on every push
+
 **Operator Console UI**
 - WebSocket-driven updates, no manual refresh needed
 - Header shows the connection, the OS and whether the app is running with admin/root rights
@@ -131,6 +137,8 @@ python -m pytest tests
 - `tests/test_real_firewall.py` changes the real OS firewall, so it only runs with `REAL_FIREWALL=1` as root or Administrator:
   - **Linux:** a real connection is dropped by a deny rule, let through by an allow rule, and dropped again once the allow rule is removed
   - **Windows:** the Windows Firewall rules are read back with `netsh`, checking that the allowed address and port were cut out of the block
+- `tests/test_siem.py` checks the SIEM events: the ECS fields every event needs, new-open-port alerts, ports blocked by a rule, and rule events marked enforced, simulated or failed
+- **Real Wazuh:** a CI job starts the official Wazuh manager, loads the rules in `siem/wazuh/`, and checks with `wazuh-logtest` that every event of a full session, and of a real scan on Linux, hits the expected rule
 - GitHub Actions runs all of them on Linux and Windows on every push
 
 ---

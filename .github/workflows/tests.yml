@@ -46,3 +46,35 @@ jobs:
         env:
           REAL_FIREWALL: '1'
         run: python -m pytest tests/test_real_firewall.py -v -rs
+
+  # Feeds the scanner's SIEM events to a real Wazuh manager and checks which rule each one hits.
+  wazuh-rules:
+    name: Wazuh rules (real Wazuh manager)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install -r requirements.txt pytest
+      - name: Write a sample session with the app's own code
+        run: SIEM_SAMPLE_OUT="$RUNNER_TEMP/session.ndjson" python -m pytest tests/test_siem.py -k sample -v
+      - name: Start a Wazuh manager with the NetScan rules
+        run: |
+          docker run -d --name wazuh \
+            -v "$PWD/siem/wazuh/netscan_rules.xml:/var/ossec/etc/rules/netscan_rules.xml:ro" \
+            wazuh/wazuh-manager:4.9.2
+          for i in $(seq 1 60); do
+            docker exec wazuh /var/ossec/bin/wazuh-control status 2>/dev/null | grep -q "wazuh-analysisd is running" && break
+            sleep 5
+          done
+          docker exec wazuh /var/ossec/bin/wazuh-control status
+      - name: Check the sample session (includes the correlation rule)
+        run: python siem/wazuh/check_rules.py wazuh "$RUNNER_TEMP/session.ndjson" --expect-correlation
+      - name: Check the events from a real scan on Linux
+        run: python siem/wazuh/check_rules.py wazuh siem/samples/real-session.ndjson
+      - name: Wazuh logs
+        if: failure()
+        run: |
+          docker logs wazuh 2>&1 | tail -60
+          docker exec wazuh tail -60 /var/ossec/logs/ossec.log

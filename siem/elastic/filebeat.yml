@@ -1,0 +1,23 @@
+# Filebeat input for Network Security Scanner events.
+# The events are already in Elastic Common Schema, so they are indexed as they are.
+filebeat.inputs:
+  - type: filestream
+    id: netscan-events
+    paths:
+      # change this to where the scanner is installed
+      - /opt/Network-Security-Scanner-with-Firewall-Rule-Simulator/state/siem/netscan-events.ndjson
+    parsers:
+      - ndjson:
+          target: ""
+          overwrite_keys: true
+          add_error_key: true
+
+output.elasticsearch:
+  hosts: ["https://localhost:9200"]
+  username: "elastic"
+  password: "${ES_PASSWORD}"
+  index: "netscan-events-%{+yyyy.MM.dd}"
+
+setup.template.name: "netscan-events"
+setup.template.pattern: "netscan-events-*"
+setup.ilm.enabled: false
