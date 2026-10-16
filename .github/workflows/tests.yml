@@ -69,7 +69,7 @@ jobs:
             docker exec wazuh /var/ossec/bin/wazuh-control status; return 1
           }
           # start with the image's own config first: mounting into /var/ossec/etc stops it being created
-          docker run -d --name wazuh wazuh/wazuh-manager:4.9.2
+          docker run -d --name wazuh wazuh/wazuh-manager:4.14.9
           wait_for_analysisd
           docker cp siem/wazuh/netscan_rules.xml wazuh:/var/ossec/etc/rules/netscan_rules.xml
           docker exec wazuh chown root:wazuh /var/ossec/etc/rules/netscan_rules.xml

@@ -55,7 +55,7 @@ Wazuh's built-in JSON decoder reads the events, and the rules match on the ECS f
 - **100501, 100510, 100511:** scan completed, rule expired, rule restored (level 3)
 - **100500, level 0:** every other scanner event, archived without an alert
 
-**Tested:** GitHub Actions starts the official `wazuh/wazuh-manager` image with these rules, feeds it a full session written by the app's own code plus the real Linux session in `samples/`, and checks with `wazuh-logtest` that every event is decoded as JSON and hits the expected rule, including the correlation rule. See `wazuh/check_rules.py`.
+**Tested:** GitHub Actions starts the official `wazuh/wazuh-manager` image (Wazuh 4.14.9) with these rules, feeds it a full session written by the app's own code plus the real Linux session in `samples/`, and checks with `wazuh-logtest` that every event is decoded as JSON and hits the expected rule, including the correlation rule. See `wazuh/check_rules.py`.
 
 ## Elastic (Filebeat)
 
