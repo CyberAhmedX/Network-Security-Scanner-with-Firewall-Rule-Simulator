@@ -126,7 +126,7 @@ def test_failed_scan_is_reported(state, monkeypatch):
     [failed] = events('scan-failed')
     assert_ecs(failed)
     assert failed['event']['outcome'] == 'failure'
-    assert 'root privileges' in failed['error']['message']
+    assert failed['error']['message'] == 'You requested a scan type which requires root privileges.'
 
 
 def test_ipv6_ports_keep_the_whole_address():

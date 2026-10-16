@@ -31,7 +31,9 @@ def main():
     container, path = sys.argv[1], sys.argv[2]
     lines = [l for l in open(path, encoding='utf-8').read().splitlines() if l.strip()]
     run = subprocess.run(['docker', 'exec', '-i', container, '/var/ossec/bin/wazuh-logtest'],
-                         input='\n'.join(lines) + '\n', capture_output=True, text=True, timeout=300)
+                         input='\n'.join(lines) + '\n', stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                         text=True, timeout=300)
+    # wazuh-logtest prints its results through logging, to stderr, so both streams are read together
     blocks = run.stdout.split('**Phase 1: Completed pre-decoding.')[1:]
     results = {}
     for block in blocks:
@@ -73,7 +75,7 @@ def main():
         print(f'\n--- {action}: expected {want}, got {got}\n{detail}')
     print(f"\n{len(lines)} events, {len(blocks)} wazuh-logtest results, {len(failures)} failures")
     if failures and not blocks:
-        print(run.stdout[-3000:], run.stderr[-2000:])
+        print(run.stdout[-3000:])
     sys.exit(1 if failures else 0)
 
 

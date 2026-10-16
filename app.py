@@ -770,7 +770,7 @@ def run_scan(sid, target, arguments, chunks):
                 # e.g. Nmap not installed, or SYN/UDP scans without admin/root privileges
                 socketio.emit('scan_error', {'message': f'Scan failed: {e}'}, to=sid)
                 siem_event('scan-failed', 'event', ['network'], ['end'], f"Nmap {arguments} scan of {target} failed",
-                           outcome='failure', severity=4, error={'message': str(e)},
+                           outcome='failure', severity=4, error={'message': str(getattr(e, 'value', e))},
                            netscan={'scan': {'id': scan_id, 'target': target, 'arguments': arguments}})
                 return
             rows = scan_rows(nm)
