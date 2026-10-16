@@ -2,6 +2,10 @@
 
 A real-time network security scanner and traffic control simulator built with **Python (Flask)**, **Flask-SocketIO**, and **Nmap**. Built to understand how network scanning and firewall logic actually work under the hood, the same core concepts used in tools like Nmap and pfSense, through a fully interactive, live web interface.
 
+![Demo: scan, block a port range, allow one port, rescan](docs/demo.gif)
+
+*A real run on Linux with root rights:* an Nmap SYN scan of this machine finds ports 8080 and 8081 open. A deny rule for 8080-8081 adds a real `iptables` DROP rule, then **Allow** on 8080 inserts an ACCEPT rule above it. The rescan proves it at the OS level: Nmap itself now sees 8080 as open and 8081 as filtered.
+
 ## Overview
 
 This project provides an educational, hands-on sandbox for exploring network-level security concepts. Users can:
