@@ -33,20 +33,35 @@ def main():
     run = subprocess.run(['docker', 'exec', '-i', container, '/var/ossec/bin/wazuh-logtest'],
                          input='\n'.join(lines) + '\n', capture_output=True, text=True, timeout=300)
     blocks = run.stdout.split('**Phase 1: Completed pre-decoding.')[1:]
-    if len(blocks) != len(lines):
-        print(run.stdout[-3000:], run.stderr[-2000:])
-        sys.exit(f'Expected {len(lines)} results from wazuh-logtest, got {len(blocks)}')
+    results = {}
+    for block in blocks:
+        full = re.search(r"\tfull event: '(.*)'\n", block)
+        if not full:
+            continue
+        try:
+            event = json.loads(full.group(1))
+        except ValueError:
+            continue
+        key = (event['@timestamp'], event['event']['action'], event['message'])
+        results.setdefault(key, []).append(block)
 
     failures, seen = [], set()
-    for line, block in zip(lines, blocks):
+    for line in lines:
         event = json.loads(line)
+        key = (event['@timestamp'], event['event']['action'], event['message'])
+        found = results.get(key)
+        if not found:
+            failures.append((event['event']['action'], sorted(expected_rules(event)), None, 'no result from wazuh-logtest'))
+            print(f"FAIL {event['event']['action']:<22} no result  {event['message'][:70]}")
+            continue
+        block = found.pop(0)
         decoder = re.search(r"\tname: '([^']+)'", block)
         rule = re.search(r"\tid: '(\d+)'", block)
         level = re.search(r"\tlevel: '(\d+)'", block)
         got = rule.group(1) if rule else None
         seen.add(got)
         want = expected_rules(event)
-        ok = decoder and decoder.group(1) == 'json' and got in want
+        ok = bool(decoder) and decoder.group(1) == 'json' and got in want
         print(f"{'ok  ' if ok else 'FAIL'} {event['event']['action']:<22} rule {got} level {level.group(1) if level else '-'}"
               f"  {event['message'][:70]}")
         if not ok:
@@ -56,6 +71,9 @@ def main():
         failures.append(('correlation', ['100505'], None, 'the burst of new open ports did not trigger 100505'))
     for action, want, got, detail in failures:
         print(f'\n--- {action}: expected {want}, got {got}\n{detail}')
+    print(f"\n{len(lines)} events, {len(blocks)} wazuh-logtest results, {len(failures)} failures")
+    if failures and not blocks:
+        print(run.stdout[-3000:], run.stderr[-2000:])
     sys.exit(1 if failures else 0)
 
 
